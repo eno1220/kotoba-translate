@@ -8,6 +8,7 @@ struct InputEditor: NSViewRepresentable {
     var editable = true
     var font: NSFont = .systemFont(ofSize: 16)
     var textColor: NSColor = .textColor
+    var focusRequest: UUID?
     var submit: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -40,6 +41,11 @@ struct InputEditor: NSViewRepresentable {
         context.coordinator.parent = self
         guard let editor = scroll.documentView as? Editor else { return }
         editor.submit = submit
+        if let focusRequest, editor.focusRequest != focusRequest {
+            // An explicit import replaces even an unfinished composition in this editor.
+            editor.unmarkText()
+        }
+        editor.focusRequest = focusRequest
         if editor.string != text && !editor.hasMarkedText() {
             let selection = editor.selectedRange()
             editor.string = text
@@ -49,6 +55,9 @@ struct InputEditor: NSViewRepresentable {
         if editor.textColor != textColor { editor.textColor = textColor }
         editor.typingAttributes[.font] = font
         editor.typingAttributes[.foregroundColor] = textColor
+        if focusRequest != nil {
+            DispatchQueue.main.async { [weak editor] in editor?.focusIfRequested() }
+        }
     }
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: InputEditor
@@ -60,6 +69,22 @@ struct InputEditor: NSViewRepresentable {
     }
     final class Editor: NSTextView {
         var submit: (() -> Void)?
+        var focusRequest: UUID?
+        private var appliedFocusRequest: UUID?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            focusIfRequested()
+        }
+
+        func focusIfRequested() {
+            guard isEditable, let focusRequest, focusRequest != appliedFocusRequest,
+                  let window, window.makeFirstResponder(self) else { return }
+            appliedFocusRequest = focusRequest
+            setSelectedRange(NSRange(location: (string as NSString).length, length: 0))
+            scrollRangeToVisible(selectedRange())
+        }
+
         override func keyDown(with event: NSEvent) {
             if isEditable && (event.keyCode == 36 || event.keyCode == 76) && !hasMarkedText() {
                 if event.modifierFlags.contains(.shift) { insertNewlineIgnoringFieldEditor(nil) }

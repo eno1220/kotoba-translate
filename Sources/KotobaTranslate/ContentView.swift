@@ -3,8 +3,10 @@ import SwiftUI
 import MarkdownUI
 
 struct ContentView: View {
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject var preferences: Preferences
     @ObservedObject var translator: Translator
+    var selectionService: SelectionService?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -26,6 +28,9 @@ struct ContentView: View {
         .padding(20)
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(minWidth: 900, minHeight: 560)
+        .onAppear {
+            selectionService?.showWindow = { openWindow(id: "translate") }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 SettingsLink { Label("設定", systemImage: "gearshape") }
@@ -70,7 +75,8 @@ struct ContentView: View {
                                 color: preferences.sourceColor)
             } else {
                 InputEditor(text: $translator.input, font: preferences.sourceFont,
-                            textColor: preferences.sourceColor, submit: translator.translate)
+                            textColor: preferences.sourceColor, focusRequest: translator.inputFocusRequest,
+                            submit: translator.translate)
                     .accessibilityLabel("翻訳するテキスト")
             }
             HStack {

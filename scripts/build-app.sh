@@ -33,6 +33,15 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSRequiresAquaSystemAppearance</key><true/>
+    <key>NSServices</key><array><dict>
+        <key>NSMenuItem</key><dict>
+            <key>default</key><string>Kotoba Translateに送る</string>
+        </dict>
+        <key>NSMessage</key><string>importSelection</string>
+        <key>NSPortName</key><string>KotobaTranslate</string>
+        <key>NSSendTypes</key><array><string>public.utf8-plain-text</string></array>
+        <key>NSRequiredContext</key><dict/>
+    </dict></array>
 </dict></plist>
 PLIST
 codesign --force --deep --sign - "$app"

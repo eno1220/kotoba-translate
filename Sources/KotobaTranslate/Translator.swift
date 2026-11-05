@@ -31,6 +31,7 @@ final class Translator: ObservableObject {
     private var articleRevision = UUID()
     @Published private(set) var inputStatistics = InputStatistics()
     @Published var sourcePreview = false
+    @Published private(set) var inputFocusRequest: UUID?
     @Published var outputPreview = false
     @Published var output = ""
     @Published var modelID: UUID?
@@ -79,6 +80,20 @@ final class Translator: ObservableObject {
         !busy && !fetchingArticle && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         preferences.models.contains { $0.id == modelID } && maxTokens > 0 && maxTokens < 32768 &&
         temperature.isFinite && (0...2).contains(temperature)
+    }
+
+    func importSelection(_ text: String) {
+        if busy { cancel() }
+        cancelArticleFetch()
+        error = nil
+        articleError = nil
+        sourcePreview = false
+        input = text
+        output = ""
+        metrics = nil
+        progress = nil
+        status = ""
+        inputFocusRequest = UUID()
     }
 
     func fetchArticle() {
