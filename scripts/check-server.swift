@@ -116,16 +116,23 @@ struct ServerCheck {
         try require(unknown.statusCode == 404, "unknown model")
         let (_, oversized) = try await request(body: body(String(repeating: "a", count: 1024 * 1024)))
         try require(oversized.statusCode == 413, "body size limit")
+        server.inference.maxConcurrency = 1
         let pending = Task { try await request(body: body("slow")) }
         for _ in 0..<100 {
             if engine.busy { break }
             try await Task.sleep(for: .milliseconds(10))
         }
-        let (_, busy) = try await request(body: body("busy"))
-        try require(busy.statusCode == 429, "concurrency rejection")
+        let queued = Task { try await request(body: body("queued")) }
+        for _ in 0..<100 {
+            if server.inference.waitingCount == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try require(server.inference.waitingCount == 1, "burst request waits instead of 429")
         engine.cancel()
         let (_, cancelled) = try await pending.value
-        try require(cancelled.statusCode == 503 && !engine.loaded && !engine.busy, "explicit cancellation")
+        try require(cancelled.statusCode == 503, "explicit cancellation")
+        let (queuedData, queuedReply) = try await queued.value
+        try require(queuedReply.statusCode == 200 && (try content(queuedData)).hasSuffix(":訳:queued"), "queue drains after cancellation")
         let disconnected = Task { try await request(body: body("slow")) }
         for _ in 0..<100 {
             if engine.busy { break }
@@ -157,9 +164,94 @@ struct ServerCheck {
         _ = try? await stopping.value
         try await Task.sleep(for: .milliseconds(100))
         try require(!engine.busy && !engine.loaded, "server stop cancellation")
-        print("PASS: auth, CORS, models, JSON/SSE, validation, limits, worker reuse, busy, cancellation/disconnect/stop, failure/crash, idle unload/reload, editor isolation (mock inference)")
+        try await checkPool(preferences, engine: engine)
+        print("PASS: auth, CORS, models, JSON/SSE, validation, limits, worker reuse, queue, cancellation/disconnect/stop, failure/crash, idle unload/reload, editor isolation (mock inference)")
     }
 
+
+    @MainActor
+    static func checkPool(_ preferences: Preferences, engine: Translator) async throws {
+        preferences.unloadSeconds = 60
+        var resources = ServerResources(availableBytes: 128 * 1024 * 1024 * 1024, onACPower: true, lowPower: false, hot: false)
+        let pool = ServerInferencePool(preferences: preferences, translator: engine, resources: { resources },
+                                       budget: { _ in .init(weights: 1024 * 1024 * 1024, cache: 1024 * 1024 * 1024) })
+        pool.maxConcurrency = 2
+        pool.reserveGB = 4
+        pool.allowBattery = false
+        pool.start()
+        defer { pool.stop() }
+        func translate(_ text: String) async throws -> String {
+            let r = TranslationRequest(model: "/mock", text: text, source: "", target: "ja", form: "", context: "", glossary: [], max_tokens: 32, temperature: 0)
+            return try await pool.translate(r) { _ in }.0
+        }
+        func waitFor(_ condition: () -> Bool) async throws {
+            for _ in 0..<300 {
+                if condition() { return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            throw checkFailure("pool condition timed out")
+        }
+        let first = Task { try await translate("slow") }
+        try await waitFor { engine.loaded && engine.busy }
+        let second = Task { try await translate("slow") }
+        try await waitFor { pool.activeCount == 2 && pool.loadedCount == 2 }
+        second.cancel()
+        _ = try? await second.value
+        try await waitFor { pool.activeCount == 1 }
+        try require(engine.busy && engine.loaded, "cancelling surplus worker preserves first request")
+        let parallel = try await translate("parallel")
+        try require(parallel.hasSuffix(":訳:parallel") && engine.busy, "independent worker completes while primary is busy")
+        // Queue cancellation must not cancel an unrelated running request.
+        resources.lowPower = true
+        let queued = Task { try await translate("cancelled queue") }
+        try await waitFor { pool.waitingCount == 1 }
+        queued.cancel()
+        _ = try? await queued.value
+        try await waitFor { pool.waitingCount == 0 }
+        try require(engine.busy, "queued cancellation preserves active inference")
+        first.cancel()
+        _ = try? await first.value
+        try await waitFor { pool.activeCount == 0 }
+        for mode in 0..<5 {
+            resources.lowPower = mode == 0
+            resources.hot = mode == 1
+            resources.onACPower = mode != 2
+            resources.memoryPressure = mode == 3
+            resources.availableBytes = mode == 4 ? 1 : 128 * 1024 * 1024 * 1024
+            let active = Task { try await translate("slow") }
+            try await waitFor { engine.busy && engine.loaded }
+            let waiting = Task { try await translate("guarded") }
+            try await waitFor { pool.waitingCount == 1 }
+            try require(pool.activeCount == 1, "resource guard \(mode) prevents expansion")
+            active.cancel()
+            _ = try? await active.value
+            try require(try await waiting.value.hasSuffix(":訳:guarded"), "resource guard still drains queue")
+        }
+        resources = ServerResources(availableBytes: 128 * 1024 * 1024 * 1024, onACPower: true, lowPower: false, hot: false)
+        pool.maxConcurrency = 1
+        engine.input = "slow"
+        engine.modelID = preferences.models.first?.id
+        engine.translate()
+        try await waitFor { engine.busy && engine.loaded }
+        let behindEditor = Task { try await translate("behind editor") }
+        try await waitFor { pool.waitingCount == 1 }
+        pool.stop()
+        _ = try? await behindEditor.value
+        try require(engine.busy && engine.loaded, "server stop preserves editor-owned worker")
+        engine.cancel()
+        pool.start()
+        let active = Task { try await translate("slow") }
+        try await waitFor { engine.busy }
+        let waiting = (0..<ServerInferencePool.queueLimit).map { i in Task { try await translate("queued \(i)") } }
+        try await waitFor { pool.waitingCount == ServerInferencePool.queueLimit }
+        do { _ = try await translate("overflow"); throw checkFailure("queue overflow accepted") }
+        catch let error as APIError { try require(error.status == 429, "bounded queue returns 429") }
+        pool.stop()
+        _ = try? await active.value
+        for task in waiting { _ = try? await task.value }
+        try require(pool.waitingCount == 0 && !engine.busy && !engine.loaded, "stop drains all queued continuations and terminates active worker")
+        print("PASS: adaptive independent workers, isolated cancellation, queued cancellation, power/thermal/pressure/memory guards, bounded queue, stop")
+    }
 
     @MainActor
     static func checkPresetsAndFiles(_ preferences: Preferences, engine: Translator, directory: URL) async throws {

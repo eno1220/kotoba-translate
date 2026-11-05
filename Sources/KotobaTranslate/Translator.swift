@@ -88,13 +88,16 @@ final class Translator: ObservableObject {
     private var settingsSubscription: AnyCancellable?
     private var quitSubscription: AnyCancellable?
     private let preferences: Preferences
+    private let idleSecondsOverride: Int?
+    var loadedModelPath: String? { loaded ? loadedPath : nil }
 
-    init(preferences: Preferences) {
+    init(preferences: Preferences, idleSecondsOverride: Int? = nil) {
         self.preferences = preferences
+        self.idleSecondsOverride = idleSecondsOverride
         modelID = preferences.preferredModelID
         optionsExpanded = preferences.models.isEmpty
         settingsSubscription = preferences.$unloadSeconds.dropFirst().sink { [weak self] seconds in
-            Task { @MainActor in self?.scheduleUnload(seconds: seconds) }
+            Task { @MainActor in self?.scheduleUnload(seconds: self?.idleSecondsOverride ?? seconds) }
         }
         quitSubscription = NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
             .sink { [weak self] _ in
@@ -436,7 +439,7 @@ final class Translator: ObservableObject {
             progress = nil
             status = event.finish_reason == "length" ? "生成上限に到達" : "完了"
             if servingAPI { finishAPI(.success((apiOutput, event))) }
-            scheduleUnload(seconds: preferences.unloadSeconds)
+            scheduleUnload(seconds: idleSecondsOverride ?? preferences.unloadSeconds)
         case "error":
             fail(APIError(status: 500, message: event.message ?? "翻訳に失敗しました。"))
         default: break

@@ -18,14 +18,14 @@ final class LocalAPIServer: ObservableObject {
     private var listener: NWListener?
     private var peers: [UUID: HTTPPeer] = [:]
     private var quitSubscription: AnyCancellable?
-    private let translator: Translator
+    let inference: ServerInferencePool
     private let preferences: Preferences
     private var activeKey = ""
     var baseURL: String { "http://127.0.0.1:\(port)/v1" }
 
     init(preferences: Preferences, translator: Translator) {
         self.preferences = preferences
-        self.translator = translator
+        inference = ServerInferencePool(preferences: preferences, translator: translator)
         port = UserDefaults.standard.object(forKey: "serverPort") as? Int ?? 8765
         apiKey = UserDefaults.standard.string(forKey: "serverKey") ?? UUID().uuidString + UUID().uuidString
         UserDefaults.standard.set(apiKey, forKey: "serverKey")
@@ -54,7 +54,9 @@ final class LocalAPIServer: ObservableObject {
                 Task { @MainActor in
                     guard let self, let listener, self.listener === listener else { return }
                     switch state {
-                    case .ready: self.starting = false; self.running = true
+                    case .ready:
+                        self.starting = false; self.running = true
+                        self.inference.start()
                     case .failed(let error):
                         self.stop()
                         self.error = error.localizedDescription
@@ -64,7 +66,7 @@ final class LocalAPIServer: ObservableObject {
             }
             listener.newConnectionHandler = { [weak self, weak listener] connection in
                 Task { @MainActor in
-                    guard let self, let listener, self.listener === listener, self.peers.count < 8 else { connection.cancel(); return }
+                    guard let self, let listener, self.listener === listener, self.peers.count < 64 else { connection.cancel(); return }
                     let id = UUID()
                     let peer = HTTPPeer(connection: connection)
                     self.peers[id] = peer
@@ -88,6 +90,7 @@ final class LocalAPIServer: ObservableObject {
         let connections = Array(peers.values)
         peers.removeAll()
         connections.forEach { $0.close() }
+        inference.stop()
     }
 
     private func handle(_ request: HTTPRequest, peer: HTTPPeer) async {
@@ -123,7 +126,6 @@ final class LocalAPIServer: ObservableObject {
             let terms = preferences.glossary.filter { !$0.source.isEmpty || !$0.target.isEmpty }
                 .map { ["source": $0.source, "target": $0.target] }
             let translation = try chat.translation(modelPath: model.path, source: source, target: target, form: form, terms: terms)
-            guard !translator.busy else { throw APIError(status: 429, message: "別の翻訳を実行中です。完了後に再試行してください。") }
             try Task.checkCancellation()
             let id = "chatcmpl-" + UUID().uuidString
             let created = Int(Date().timeIntervalSince1970)
@@ -138,7 +140,7 @@ final class LocalAPIServer: ObservableObject {
                 peer.event(chunk(["role": "assistant", "content": ""]))
             }
             peer.startInferenceTimeout()
-            let (text, metrics) = try await translator.translateAPI(translation) { [weak peer] text in
+            let (text, metrics) = try await inference.translate(translation) { [weak peer] text in
                 if streaming { peer?.event(chunk(["content": text])) }
             }
             try Task.checkCancellation()

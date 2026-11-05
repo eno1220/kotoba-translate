@@ -108,6 +108,7 @@ struct ServerView: View {
                     Text("リクエストで言語・文体を省略した場合に使います。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                ServerCapacityView(pool: server.inference)
                 Section("共有モデル") {
                     HStack(spacing: 8) {
                         if translator.busy || translator.loaded {
@@ -137,7 +138,7 @@ struct ServerView: View {
                             if let elapsed = metrics.elapsed { Text(String(format: "%.2f秒", elapsed)) }
                         }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
-                    Text("翻訳画面とモデル・自動解放設定を共有します。翻訳中の追加リクエストには429を返します。モデルはリクエスト時に読み込みます。")
+                    Text("通常は翻訳画面と1つのモデルを共有します。混雑時だけ追加のモデルを読み込み、追加分は30秒の待機後に解放します。最後の1つは上の自動解放設定に従います。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped)
@@ -163,6 +164,40 @@ struct ServerView: View {
             }
             .controlSize(.large).padding(14).modifier(ControlSurface())
         }.padding(12)
+    }
+}
+
+private struct ServerCapacityView: View {
+    @ObservedObject var pool: ServerInferencePool
+
+    var body: some View {
+        Section("混雑時の処理") {
+            Picker("最大並列数", selection: $pool.maxConcurrency) {
+                ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
+            }
+            Toggle("バッテリー駆動中も並列数を増やす", isOn: $pool.allowBattery)
+            Picker("確保するメモリの余裕", selection: $pool.reserveGB) {
+                ForEach([2, 4, 8, 12, 16], id: \.self) { Text("\($0) GB").tag($0) }
+            }
+            HStack(spacing: 12) {
+                if pool.loadedCount > 0 { Circle().fill(.green).frame(width: 7, height: 7).accessibilityHidden(true) }
+                Text("実行 \(pool.activeCount)件 · 待機 \(pool.waitingCount)件 · モデル \(pool.loadedCount)個")
+                Spacer()
+                Button("実行中を中止", action: pool.cancelActive).disabled(pool.activeCount == 0)
+                Button("待機モデルを解放", action: pool.unloadIdle).disabled(pool.loadedCount == 0)
+            }
+            Text(pool.reason).font(.caption).foregroundStyle(.secondary)
+            Text(String(format: "利用可能メモリの目安 %.1f GB · %@%@%@",
+                        Double(pool.resources.availableBytes) / 1_073_741_824,
+                        pool.resources.onACPower ? "外部電源で駆動" : "バッテリー",
+                        pool.resources.lowPower ? " · 低電力モード" : "",
+                        pool.resources.hot ? " · 高温" : ""))
+                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            Text("通常は1並列。最大32件を待機させ、電源・温度・メモリを確認して必要なときだけ増やします。低電力モード・高温・メモリプレッシャー時は1並列。実行中の翻訳は完了まで続けます。")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("並列ごとにモデル用メモリが必要です。GPUの競合で遅くなる場合は最大並列数を1に戻してください。接続するアプリ側の並列数は2〜4が目安です。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 }
 

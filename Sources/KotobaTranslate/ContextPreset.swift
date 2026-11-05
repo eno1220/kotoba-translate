@@ -40,18 +40,19 @@ struct PresetSettingsView: View {
                     Label("独自の場面や背景を登録できます", systemImage: "face.smiling")
                         .foregroundStyle(.secondary)
                 }
-                ForEach($preferences.customPresets) { $preset in
+                ForEach(preferences.customPresets) { preset in
+                    let binding = presetBinding(preset)
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("絵文字").font(.caption).foregroundStyle(.secondary)
                                 // Avoid rewriting marked text while an input method is composing.
-                                TextField("絵文字", text: $preset.emoji).labelsHidden()
+                                TextField("絵文字", text: binding.emoji).labelsHidden()
                                     .help("絵文字（⌃⌘スペース）。空欄の場合は✨を表示します。")
                             }.frame(width: 80)
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("名前").font(.caption).foregroundStyle(.secondary)
-                                TextField("名前", text: $preset.name).labelsHidden()
+                                TextField("名前", text: binding.name).labelsHidden()
                             }
                             Button(role: .destructive) { preferences.removePreset(preset.id) } label: {
                                 Image(systemName: "minus.circle")
@@ -59,7 +60,7 @@ struct PresetSettingsView: View {
                                 .accessibilityLabel("プリセット「\(preset.name)」を削除")
                         }
                         Text("場面・背景").font(.caption).foregroundStyle(.secondary)
-                        TextEditor(text: $preset.contextDescription).font(.body)
+                        TextEditor(text: binding.contextDescription).font(.body)
                             .scrollContentBackground(.hidden).padding(8).frame(height: 100)
                             .modifier(ReadingSurface(cornerRadius: 10))
                             .accessibilityLabel("プリセット「\(preset.name)」の場面・背景")
@@ -74,10 +75,11 @@ struct PresetSettingsView: View {
                     Label("自動適用するアプリが登録されていません", systemImage: "app.badge")
                         .foregroundStyle(.secondary)
                 }
-                ForEach($preferences.appPresetRules) { $rule in
+                ForEach(preferences.appPresetRules) { rule in
+                    let binding = ruleBinding(rule)
                     HStack {
                         Text(rule.name).help(rule.id).frame(maxWidth: .infinity, alignment: .leading)
-                        Picker("プリセット", selection: $rule.presetID) {
+                        Picker("プリセット", selection: binding.presetID) {
                             Text("自動適用しない").tag(nil as String?)
                             ForEach(preferences.contextPresets) { Text($0.label).tag(Optional($0.id)) }
                         }.labelsHidden().frame(width: 210)
@@ -93,5 +95,27 @@ struct PresetSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
+    }
+
+    // SwiftUI can still read or commit an editor's binding while its row is being
+    // removed. Resolve by ID each time, and ignore commits for deleted rows.
+    private func presetBinding(_ preset: ContextPreset) -> Binding<ContextPreset> {
+        Binding(
+            get: { preferences.customPresets.first { $0.id == preset.id } ?? preset },
+            set: { value in
+                guard let index = preferences.customPresets.firstIndex(where: { $0.id == preset.id }) else { return }
+                preferences.customPresets[index] = value
+            }
+        )
+    }
+
+    private func ruleBinding(_ rule: AppPresetRule) -> Binding<AppPresetRule> {
+        Binding(
+            get: { preferences.appPresetRules.first { $0.id == rule.id } ?? rule },
+            set: { value in
+                guard let index = preferences.appPresetRules.firstIndex(where: { $0.id == rule.id }) else { return }
+                preferences.appPresetRules[index] = value
+            }
+        )
     }
 }
