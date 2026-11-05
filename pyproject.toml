@@ -1,0 +1,8 @@
+[project]
+name = "kotoba-translate-worker"
+version = "0.1.0"
+requires-python = ">=3.12,<3.14"
+dependencies = ["mlx-lm==0.32.0", "mlx==0.32.3", "transformers==5.19.0", "numba==0.68.0"]
+
+[tool.uv]
+package = false
