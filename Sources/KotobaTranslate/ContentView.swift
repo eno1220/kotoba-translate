@@ -306,12 +306,29 @@ private struct MarkdownPreview: View, Equatable {
     var body: some View {
         ScrollView {
             Markdown(text)
+                .markdownCodeSyntaxHighlighter(PreviewCodeHighlighter.shared)
                 .markdownTextStyle {
                     FontFamily(.custom(fontName))
                     FontSize(fontSize)
                     ForegroundColor(color)
                 }
                 .markdownTextStyle(\.link) { ForegroundColor(.accentColor) }
+                .markdownBlockStyle(\.codeBlock) { configuration in
+                    ScrollView(.horizontal) {
+                        configuration.label
+                            .markdownTextStyle { FontFamilyVariant(.monospaced) }
+                            .fixedSize(horizontal: true, vertical: false)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .background(Color.primary.opacity(0.045))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                    }
+                    .markdownMargin(top: 12, bottom: 12)
+                }
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
