@@ -36,7 +36,7 @@ final class Translator: ObservableObject {
     @Published var output = ""
     @Published var modelID: UUID?
     @Published var source = ""
-    @Published var target = "ja"
+    @Published var target = "ja" { didSet { initialTargetChosen = true } }
     @Published var form = ""
     @Published var context = ""
     @Published var useGlossary = true
@@ -58,6 +58,7 @@ final class Translator: ObservableObject {
     private var idleTask: Task<Void, Never>?
     private var statisticsTask: Task<Void, Never>?
     private var statisticsRevision = UUID()
+    private var initialTargetChosen = false
     private var settingsSubscription: AnyCancellable?
     private var quitSubscription: AnyCancellable?
     private let preferences: Preferences
@@ -138,25 +139,36 @@ final class Translator: ObservableObject {
     private func updateInputStatistics() {
         statisticsTask?.cancel()
         let text = input
+        let detectInitialTarget = !initialTargetChosen
         let revision = UUID()
         statisticsRevision = revision
         statisticsTask = Task.detached(priority: .utility) { [weak self] in
             do {
                 try await Task.sleep(for: .milliseconds(150))
                 let statistics = try InputStatistics.measure(text)
+                let initialTarget = detectInitialTarget ? InputLanguage.initialTarget(for: text) : nil
                 try Task.checkCancellation()
-                await self?.applyInputStatistics(statistics, revision: revision)
+                await self?.applyInputStatistics(statistics, initialTarget: initialTarget, revision: revision)
             } catch { /* Replaced by more recent input. */ }
         }
     }
 
-    private func applyInputStatistics(_ statistics: InputStatistics, revision: UUID) {
+    private func applyInputStatistics(_ statistics: InputStatistics, initialTarget: String?, revision: UUID) {
         guard revision == statisticsRevision else { return }
         inputStatistics = statistics
+        chooseInitialTarget(initialTarget)
+    }
+
+    private func chooseInitialTarget(_ detectedTarget: String?) {
+        guard !initialTargetChosen, !busy, let detectedTarget else { return }
+        target = detectedTarget
     }
 
     func translate() {
         guard canTranslate, let location = preferences.models.first(where: { $0.id == modelID }) else { return }
+        // Enter may arrive before the debounced analysis finishes. Resolve the first
+        // target from the same bounded sample before constructing the worker request.
+        if !initialTargetChosen { chooseInitialTarget(InputLanguage.initialTarget(for: input)) }
         let terms = useGlossary ? preferences.glossary.filter { !$0.source.isEmpty || !$0.target.isEmpty } : []
         if terms.contains(where: { $0.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
             error = "辞書の原語と訳語を入力してください。"
