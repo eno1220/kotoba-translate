@@ -90,7 +90,8 @@ struct InputEditor: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            focusIfRequested()
+            // Wait until SwiftUI has finished choosing the window's initial responder.
+            DispatchQueue.main.async { [weak self] in self?.focusIfRequested() }
         }
 
         func focusIfRequested() {

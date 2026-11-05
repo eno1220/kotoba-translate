@@ -4,6 +4,8 @@ import MarkdownUI
 
 struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
+    @State private var articlePopoverPresented = false
+    @FocusState private var articleURLFocused: Bool
     @ObservedObject var preferences: Preferences
     @ObservedObject var translator: Translator
     var selectionService: SelectionService?
@@ -42,6 +44,9 @@ struct ContentView: View {
                 translator.modelID = preferences.preferredModelID
             }
         }
+        .onChange(of: translator.inputFocusRequest) { _, _ in
+            articlePopoverPresented = false
+        }
         .alert("翻訳エラー", isPresented: Binding(get: { translator.error != nil }, set: { if !$0 { translator.error = nil } })) {
             Button("OK") { translator.error = nil }
         } message: { Text(translator.error ?? "") }
@@ -68,8 +73,6 @@ struct ContentView: View {
             .buttonStyle(.borderless)
             .padding(.horizontal, 14).frame(height: 54)
             Divider()
-            articleURLBar
-            Divider()
             if translator.sourcePreview {
                 markdownPreview(translator.input, font: preferences.sourceFont,
                                 color: preferences.sourceColor)
@@ -78,6 +81,15 @@ struct ContentView: View {
                             textColor: preferences.sourceColor, focusRequest: translator.inputFocusRequest,
                             submit: translator.translate)
                     .accessibilityLabel("翻訳するテキスト")
+                    .overlay(alignment: .topLeading) {
+                        if translator.input.isEmpty {
+                            Text("テキストを入力またはペースト")
+                                .font(Font(preferences.sourceFont))
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 16).padding(.vertical, 18)
+                                .allowsHitTesting(false)
+                        }
+                    }
             }
             HStack {
                 Text("\(translator.inputStatistics.characters)文字 · 約\(translator.inputStatistics.estimatedTokens) tokens")
@@ -94,6 +106,7 @@ struct ContentView: View {
             TextField("記事のURL", text: $translator.articleURL)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityLabel("記事のURL")
+                .focused($articleURLFocused)
                 .onSubmit { translator.fetchArticle() }
                 .disabled(translator.fetchingArticle || translator.busy)
             if translator.fetchingArticle {
@@ -105,7 +118,6 @@ struct ContentView: View {
                     .help("記事本文をMarkdownに変換し、原文を置き換えます")
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
     }
 
     private var outputPane: some View {
@@ -208,6 +220,23 @@ struct ContentView: View {
             .toggleStyle(.button)
             .keyboardShortcut("o", modifiers: [.command, .option])
             .help("翻訳オプション（⌥⌘O）")
+            Button {
+                articlePopoverPresented = true
+            } label: {
+                HStack(spacing: 6) {
+                    Label(translator.fetchingArticle ? "記事を取得中" : "記事を取得", systemImage: "link")
+                    if translator.fetchingArticle { ProgressView().controlSize(.small) }
+                }
+            }
+            .popover(isPresented: $articlePopoverPresented) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("記事を取得").font(.headline)
+                    articleURLBar
+                }
+                .padding(16).frame(width: 440)
+                .onAppear { articleURLFocused = true }
+                .onDisappear { translator.focusInput() }
+            }
             Spacer(minLength: 12)
             if translator.busy {
                 if let progress = translator.progress {

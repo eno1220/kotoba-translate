@@ -31,7 +31,7 @@ final class Translator: ObservableObject {
     private var articleRevision = UUID()
     @Published private(set) var inputStatistics = InputStatistics()
     @Published var sourcePreview = false
-    @Published private(set) var inputFocusRequest: UUID?
+    @Published private(set) var inputFocusRequest: UUID? = UUID()
     @Published var outputPreview = false
     @Published var output = ""
     @Published var modelID: UUID?
@@ -97,6 +97,11 @@ final class Translator: ObservableObject {
         inputFocusRequest = UUID()
     }
 
+    func focusInput() {
+        sourcePreview = false
+        inputFocusRequest = UUID()
+    }
+
     func fetchArticle() {
         guard !fetchingArticle, !busy else { return }
         let url: URL
@@ -133,6 +138,7 @@ final class Translator: ObservableObject {
         if let markdown {
             sourcePreview = false
             input = markdown
+            focusInput()
         }
     }
 
