@@ -138,6 +138,22 @@ struct ServerView: View {
                             if let elapsed = metrics.elapsed { Text(String(format: "%.2f秒", elapsed)) }
                         }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
+                    if !server.lastTimings.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("直近のAPIリクエスト").font(.caption.bold())
+                            ForEach([("total_seconds", "合計"), ("queue_seconds", "待機"),
+                                     ("first_content_seconds", "最初の訳文まで"), ("load_seconds", "読み込み"),
+                                     ("prompt_seconds", "入力処理"), ("generation_seconds", "生成")], id: \.0) { key, label in
+                                if let seconds = server.lastTimings[key] {
+                                    Text(String(format: "%@ %.2f秒", label, seconds))
+                                }
+                            }
+                            if let tps = server.lastTimings["generation_tps"] {
+                                Text(String(format: "生成速度 %.1f token/s", tps))
+                            }
+                        }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        .help("サーバー内の計測です。合計は待機やPython起動を含みます。入力処理・生成はMLXの速度から算出。ブラウザへの転送・描画時間は含みません。")
+                    }
                     Text("通常は翻訳画面と1つのモデルを共有します。混雑時だけ追加のモデルを読み込み、追加分は30秒の待機後に解放します。最後の1つは上の自動解放設定に従います。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -195,7 +211,7 @@ private struct ServerCapacityView: View {
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             Text("通常は1並列。最大32件を待機させ、電源・温度・メモリを確認して必要なときだけ増やします。低電力モード・高温・メモリプレッシャー時は1並列。実行中の翻訳は完了まで続けます。")
                 .font(.caption).foregroundStyle(.secondary)
-            Text("並列ごとにモデル用メモリが必要です。GPUの競合で遅くなる場合は最大並列数を1に戻してください。接続するアプリ側の並列数は2〜4が目安です。")
+            Text("速度を優先する場合は、この設定と接続するアプリ側の並列数を1にしてください。並列ごとにモデル用メモリが必要で、GPUの競合により遅くなる場合があります。2以上はページ全体の完了時間を比較して選んでください。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

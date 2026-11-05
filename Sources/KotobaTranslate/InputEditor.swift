@@ -9,6 +9,7 @@ struct InputEditor: NSViewRepresentable {
     var font: NSFont = .systemFont(ofSize: 16)
     var textColor: NSColor = .textColor
     var focusRequest: UUID?
+    var placeholder = ""
     var submit: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -33,6 +34,7 @@ struct InputEditor: NSViewRepresentable {
         editor.textContainer?.widthTracksTextView = true
         editor.delegate = context.coordinator
         editor.submit = submit
+        editor.placeholder = placeholder
         scroll.documentView = editor
         scroll.hasVerticalScroller = true
         return scroll
@@ -41,6 +43,7 @@ struct InputEditor: NSViewRepresentable {
         context.coordinator.parent = self
         guard let editor = scroll.documentView as? Editor else { return }
         editor.submit = submit
+        editor.placeholder = placeholder
         if let focusRequest, editor.focusRequest != focusRequest {
             // An explicit import replaces even an unfinished composition in this editor.
             editor.unmarkText()
@@ -62,6 +65,7 @@ struct InputEditor: NSViewRepresentable {
                 editor.string = text
             }
             editor.setSelectedRange(NSRange(location: min(selection.location, replacement.length), length: 0))
+            editor.needsDisplay = true
         }
         if editor.font != font { editor.font = font }
         if editor.textColor != textColor { editor.textColor = textColor }
@@ -85,8 +89,37 @@ struct InputEditor: NSViewRepresentable {
     }
     final class Editor: NSTextView {
         var submit: (() -> Void)?
+        var placeholder = "" {
+            didSet { if placeholder != oldValue { needsDisplay = true } }
+        }
         var focusRequest: UUID?
         private var appliedFocusRequest: UUID?
+
+        override func draw(_ dirtyRect: NSRect) {
+            super.draw(dirtyRect)
+            guard string.isEmpty, !hasMarkedText(), !placeholder.isEmpty else { return }
+            let origin = NSPoint(x: textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0),
+                                 y: textContainerOrigin.y)
+            (placeholder as NSString).draw(at: origin, withAttributes: [
+                .font: font ?? NSFont.systemFont(ofSize: 16),
+                .foregroundColor: NSColor.placeholderTextColor
+            ])
+        }
+
+        override func didChangeText() {
+            super.didChangeText()
+            needsDisplay = true
+        }
+
+        override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+            super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+            needsDisplay = true
+        }
+
+        override func unmarkText() {
+            super.unmarkText()
+            needsDisplay = true
+        }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()

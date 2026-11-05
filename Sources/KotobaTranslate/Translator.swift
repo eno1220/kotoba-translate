@@ -17,6 +17,7 @@ struct WorkerEvent: Decodable {
     var prompt_tps: Double?
     var load_seconds: Double?
     var finish_reason: String?
+    var queue_seconds: Double?
 }
 
 @MainActor

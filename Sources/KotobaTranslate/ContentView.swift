@@ -82,17 +82,9 @@ struct ContentView: View {
             } else {
                 InputEditor(text: $translator.input, font: preferences.sourceFont,
                             textColor: preferences.sourceColor, focusRequest: translator.inputFocusRequest,
+                            placeholder: "テキストを入力またはペースト",
                             submit: translator.translate)
                     .accessibilityLabel("翻訳するテキスト")
-                    .overlay(alignment: .topLeading) {
-                        if translator.input.isEmpty {
-                            Text("テキストを入力またはペースト")
-                                .font(Font(preferences.sourceFont))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 16).padding(.vertical, 18)
-                                .allowsHitTesting(false)
-                        }
-                    }
             }
             HStack {
                 Text("\(translator.inputStatistics.characters)文字 · 原文トークン数 約\(translator.inputStatistics.estimatedTokens)")

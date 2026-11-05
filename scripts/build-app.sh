@@ -2,8 +2,25 @@
 set -euo pipefail
 cd "${0:A:h:h}"
 
-swift build -c release "$@"
-bin_dir=$(swift build -c release --show-bin-path "$@")
+build_args=("$@")
+sdk_selected=false
+for arg in "$@"; do
+    case "$arg" in --sdk|--sdk=*) sdk_selected=true ;; esac
+done
+# This CLT's 27.2 SDK uses SwiftUIMacros, but the toolchain omits its plugin.
+# Keep explicit SDK choices; use the installed working SDK for ordinary builds.
+if [[ "$sdk_selected" == false && -z "${SDKROOT:-}" && "$(xcrun --sdk macosx --show-sdk-version)" == 27.2 ]]; then
+    fallback_sdk="$(xcode-select -p)/SDKs/MacOSX26.5.sdk"
+    if [[ ! -d "$fallback_sdk" ]]; then
+        print -u2 'macOS 27.2 SDK の SwiftUIMacros が不足しています。利用可能な SDK を --sdk で指定してください。'
+        exit 1
+    fi
+    print -u2 "macOS 27.2 SDK の SwiftUIMacros 不足を回避するため、$fallback_sdk を使用します。"
+    build_args+=(--sdk "$fallback_sdk")
+fi
+
+swift build -c release "${build_args[@]}"
+bin_dir=$(swift build -c release --show-bin-path "${build_args[@]}")
 app="$PWD/dist/Kotoba Translate.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 iconset="$PWD/.build/AppIcon.iconset"

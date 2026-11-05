@@ -119,7 +119,7 @@ final class ServerInferencePool: ObservableObject {
         readBudget = budget
         self.resources = resources()
         let defaults = UserDefaults.standard
-        maxConcurrency = min(4, max(1, defaults.object(forKey: "serverConcurrency") as? Int ?? 2))
+        maxConcurrency = min(4, max(1, defaults.object(forKey: "serverConcurrency") as? Int ?? 1))
         reserveGB = min(16, max(2, defaults.object(forKey: "serverReserveGB") as? Int ?? 4))
         allowBattery = defaults.bool(forKey: "serverAllowBattery")
     }
@@ -170,6 +170,7 @@ final class ServerInferencePool: ObservableObject {
     }
 
     func translate(_ request: TranslationRequest, delta: @escaping (String) -> Void) async throws -> (String, WorkerEvent) {
+        let started = ContinuousClock.now
         try Task.checkCancellation()
         guard accepting else { throw CancellationError() }
         guard waiting.count < Self.queueLimit else {
@@ -177,7 +178,9 @@ final class ServerInferencePool: ObservableObject {
         }
         let model = request.model
         let readBudget = readBudget
-        let budget = await Task.detached(priority: .utility) { readBudget(model) }.value
+        // A single worker does not need a model-directory scan to decide whether
+        // another allocation fits. Avoid that I/O for every small browser fragment.
+        let budget = maxConcurrency > 1 ? await Task.detached(priority: .utility) { readBudget(model) }.value : nil
         try Task.checkCancellation()
         guard accepting else { throw CancellationError() }
         let id = UUID()
@@ -200,7 +203,10 @@ final class ServerInferencePool: ObservableObject {
         }
         try Task.checkCancellation()
         guard accepting else { throw CancellationError() }
-        return try await slot.translator.translateAPI(request, delta: delta)
+        let queueSeconds = started.duration(to: .now).seconds
+        var (text, metrics) = try await slot.translator.translateAPI(request, delta: delta)
+        metrics.queue_seconds = queueSeconds
+        return (text, metrics)
     }
 
     private func cancelWaiting(_ id: UUID) {
@@ -253,6 +259,11 @@ final class ServerInferencePool: ObservableObject {
             if candidate == nil { candidate = slots.first { !$0.assigned && !$0.translator.busy && $0.translator.loadedModelPath == next.model } }
             if candidate == nil { candidate = slots.first { !$0.assigned && !$0.translator.busy } }
             if occupied > 0 {
+                // If concurrency was increased during a serial request, wait for
+                // it to finish before expanding with a full memory estimate.
+                guard slots.filter(\.assigned).allSatisfy({ $0.budget != nil }) else {
+                    reason = "実行中の翻訳完了後に並列数を再判定"; break
+                }
                 // Only one cold load at a time. The next expansion uses a fresh OS snapshot.
                 guard slots.filter({ $0.assigned }).allSatisfy({ $0.translator.loadedModelPath == $0.model }) else {
                     reason = "モデル読み込み完了後に並列数を再判定"; break

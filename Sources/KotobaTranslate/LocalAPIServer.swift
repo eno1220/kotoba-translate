@@ -15,6 +15,7 @@ final class LocalAPIServer: ObservableObject {
     @Published private(set) var starting = false
     @Published private(set) var error: String?
     @Published private(set) var completed = 0
+    @Published private(set) var lastTimings: [String: Double] = [:]
     private var listener: NWListener?
     private var peers: [UUID: HTTPPeer] = [:]
     private var quitSubscription: AnyCancellable?
@@ -94,6 +95,7 @@ final class LocalAPIServer: ObservableObject {
     }
 
     private func handle(_ request: HTTPRequest, peer: HTTPPeer) async {
+        let started = ContinuousClock.now
         // Preflight carries no credentials. All actual endpoints require the bearer key.
         if request.method == "OPTIONS" { peer.respond(status: 204, body: Data()); return }
         guard request.headers["authorization"] == "Bearer " + activeKey else {
@@ -140,7 +142,11 @@ final class LocalAPIServer: ObservableObject {
                 peer.event(chunk(["role": "assistant", "content": ""]))
             }
             peer.startInferenceTimeout()
+            var firstContentSeconds: Double?
             let (text, metrics) = try await inference.translate(translation) { [weak peer] text in
+                if !text.isEmpty && firstContentSeconds == nil {
+                    firstContentSeconds = started.duration(to: .now).seconds
+                }
                 if streaming { peer?.event(chunk(["content": text])) }
             }
             try Task.checkCancellation()
@@ -148,13 +154,34 @@ final class LocalAPIServer: ObservableObject {
             let finish = metrics.finish_reason == "length" ? "length" : "stop"
             let usage = ["prompt_tokens": metrics.prompt_tokens ?? 0, "completion_tokens": metrics.tokens ?? 0,
                          "total_tokens": (metrics.prompt_tokens ?? 0) + (metrics.tokens ?? 0)]
+            // Numeric diagnostics only; never retain source, context, or translated text.
+            var timings: [String: Double] = ["total_seconds": started.duration(to: .now).seconds]
+            timings["queue_seconds"] = metrics.queue_seconds
+            timings["worker_seconds"] = metrics.elapsed
+            timings["load_seconds"] = metrics.load_seconds
+            timings["first_content_seconds"] = firstContentSeconds
+            timings["generation_tps"] = metrics.tps
+            timings["prompt_tps"] = metrics.prompt_tps
+            if let tokens = metrics.prompt_tokens, let tps = metrics.prompt_tps, tps > 0 {
+                timings["prompt_seconds"] = Double(tokens) / tps
+            }
+            if let tokens = metrics.tokens, let tps = metrics.tps, tps > 0 {
+                timings["generation_seconds"] = Double(tokens) / tps
+            }
+            lastTimings = timings
             if streaming {
-                peer.event(chunk([:], finish: finish))
+                var final = chunk([:], finish: finish)
+                final["timings"] = timings
+                peer.event(final)
+                if chat.stream_options?.include_usage == true {
+                    peer.event(["id": id, "object": "chat.completion.chunk", "created": created,
+                                "model": modelName, "choices": [], "usage": usage])
+                }
                 peer.endStream()
             } else {
                 peer.json(["id": id, "object": "chat.completion", "created": created, "model": modelName,
                            "choices": [["index": 0, "message": ["role": "assistant", "content": text], "finish_reason": finish]],
-                           "usage": usage])
+                           "usage": usage, "timings": timings])
             }
         } catch {
             let failure = error as? APIError ?? APIError(status: error is CancellationError ? 503 : 500,

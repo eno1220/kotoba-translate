@@ -1,5 +1,11 @@
 import Foundation
 
+extension Duration {
+    var seconds: Double {
+        Double(components.seconds) + Double(components.attoseconds) / 1e18
+    }
+}
+
 struct TranslationRequest: Encodable {
     var model: String
     var text: String
@@ -31,6 +37,10 @@ struct ChatRequest: Decodable {
     let model: String?
     let messages: [Message]
     let stream: Bool?
+    struct StreamOptions: Decodable {
+        let include_usage: Bool?
+    }
+    let stream_options: StreamOptions?
     let max_tokens: Int?
     let max_completion_tokens: Int?
     let temperature: Double?

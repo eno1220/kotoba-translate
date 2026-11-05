@@ -49,7 +49,7 @@ struct ServerCheck {
             print(json.dumps(dict(event='prefill', current=0, total=5)), flush=True)
             time.sleep(10 if r['text'] == 'slow' else 0.1)
             print(json.dumps(dict(event='delta', text=str(os.getpid()) + ':訳:' + r['text'], tokens=3, tps=30)), flush=True)
-            print(json.dumps(dict(event='done', tokens=3, prompt_tokens=5, tps=30, elapsed=0.1, finish_reason='stop')), flush=True)
+            print(json.dumps(dict(event='done', tokens=3, prompt_tokens=5, tps=30, prompt_tps=100, load_seconds=0.01, elapsed=0.1, finish_reason='stop')), flush=True)
         """.write(to: worker, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: worker.path)
         let preferences = Preferences()
@@ -102,11 +102,27 @@ struct ServerCheck {
         try require(firstReply.statusCode == 200, "completion: \(String(decoding: first, as: UTF8.self))")
         let firstText = try content(first)
         try require(firstText.hasSuffix(":訳:hello") && engine.loaded, "completion and model load")
+        func timings(_ data: Data) throws -> [String: Double] {
+            let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            guard let values = object["timings"] as? [String: Double] else { throw checkFailure("missing API timings") }
+            return values
+        }
+        let measured = try timings(first)
+        try require(measured["generation_tps"] == 30 && measured["prompt_seconds"] == 0.05 && measured["generation_seconds"] == 0.1, "separate prompt and generation timings")
+        try require(measured["total_seconds"]! >= measured["first_content_seconds"]! && measured["first_content_seconds"]! >= measured["queue_seconds"]!, "server timing boundaries")
+        try require(server.lastTimings == measured, "API metrics available independently of editor metrics")
         let (second, _) = try await request(body: body("again"))
         try require(try content(second).split(separator: ":").first == firstText.split(separator: ":").first, "worker reuse")
         let (sse, sseReply) = try await request(body: body("stream", stream: true))
         let events = String(decoding: sse, as: UTF8.self)
         try require(sseReply.value(forHTTPHeaderField: "Content-Type")?.contains("text/event-stream") == true && events.contains("chat.completion.chunk") && events.contains("[DONE]"), "streaming")
+        try require(events.contains("\"timings\"") && !events.contains("\"usage\""), "stream timings without unrequested usage event")
+        var usageRequest = body("stream usage", stream: true)
+        usageRequest["stream_options"] = ["include_usage": true]
+        let (usageStream, _) = try await request(body: usageRequest)
+        let usageEvents = try String(decoding: usageStream, as: UTF8.self).components(separatedBy: "\n")
+            .filter { $0.hasPrefix("data: {") }.map { try JSONSerialization.jsonObject(with: Data($0.dropFirst(6).utf8)) as! [String: Any] }
+        try require(usageEvents.count >= 4 && usageEvents.last?["usage"] != nil && (usageEvents.last?["choices"] as? [Any])?.isEmpty == true, "opt-in SSE usage event before DONE")
         try require(engine.input == "keep input" && engine.output == "keep output" && engine.context == "keep context", "API must preserve editor text")
         let (_, invalid) = try await request(body: ["messages": [["role": "user", "content": "x"]], "target_lang": "invalid"])
         try require(invalid.statusCode == 400, "language validation")
@@ -128,11 +144,13 @@ struct ServerCheck {
             try await Task.sleep(for: .milliseconds(10))
         }
         try require(server.inference.waitingCount == 1, "burst request waits instead of 429")
+        try await Task.sleep(for: .milliseconds(80))
         engine.cancel()
         let (_, cancelled) = try await pending.value
         try require(cancelled.statusCode == 503, "explicit cancellation")
         let (queuedData, queuedReply) = try await queued.value
         try require(queuedReply.statusCode == 200 && (try content(queuedData)).hasSuffix(":訳:queued"), "queue drains after cancellation")
+        try require(try timings(queuedData)["queue_seconds"]! >= 0.08, "queue timing includes actual waiting")
         let disconnected = Task { try await request(body: body("slow")) }
         for _ in 0..<100 {
             if engine.busy { break }
