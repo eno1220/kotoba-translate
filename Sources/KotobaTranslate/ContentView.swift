@@ -62,7 +62,7 @@ struct ContentView: View {
             Divider()
             if translator.sourcePreview {
                 markdownPreview(translator.input, font: preferences.sourceFont,
-                                weight: preferences.sourceFontWeight, color: preferences.sourceColor)
+                                color: preferences.sourceColor)
             } else {
                 InputEditor(text: $translator.input, font: preferences.sourceFont,
                             textColor: preferences.sourceColor, submit: translator.translate)
@@ -102,7 +102,7 @@ struct ContentView: View {
             Divider()
             if translator.outputPreview {
                 markdownPreview(translator.output, font: preferences.outputFont,
-                                weight: preferences.outputFontWeight, color: preferences.outputColor)
+                                color: preferences.outputColor)
             } else {
                 InputEditor(text: .constant(translator.output), editable: false, font: preferences.outputFont,
                             textColor: preferences.outputColor)
@@ -211,9 +211,9 @@ struct ContentView: View {
         .help(isOn.wrappedValue ? "生テキストを表示" : "Markdownをプレビュー")
     }
 
-    private func markdownPreview(_ text: String, font: NSFont, weight: EditorWeight, color: NSColor) -> some View {
+    private func markdownPreview(_ text: String, font: NSFont, color: NSColor) -> some View {
         MarkdownPreview(text: text, fontName: font.fontName, fontSize: font.pointSize,
-                        weight: weight, color: Color(nsColor: color))
+                        color: Color(nsColor: color))
             .equatable()
     }
 
@@ -242,7 +242,6 @@ private struct MarkdownPreview: View, Equatable {
     let text: String
     let fontName: String
     let fontSize: CGFloat
-    let weight: EditorWeight
     let color: Color
 
     var body: some View {
@@ -251,7 +250,6 @@ private struct MarkdownPreview: View, Equatable {
                 .markdownTextStyle {
                     FontFamily(.custom(fontName))
                     FontSize(fontSize)
-                    FontWeight(weight.swiftUI)
                     ForegroundColor(color)
                 }
                 .markdownTextStyle(\.link) { ForegroundColor(.accentColor) }
