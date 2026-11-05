@@ -13,9 +13,64 @@ struct GlossaryTerm: Identifiable, Codable {
     var target = ""
 }
 
+enum EditorWeight: String, Codable, CaseIterable, Identifiable {
+    case light, regular, medium, semibold, bold
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .light: "Light"
+        case .regular: "Regular"
+        case .medium: "Medium"
+        case .semibold: "Semibold"
+        case .bold: "Bold"
+        }
+    }
+    var native: NSFont.Weight {
+        switch self {
+        case .light: .light
+        case .regular: .regular
+        case .medium: .medium
+        case .semibold: .semibold
+        case .bold: .bold
+        }
+    }
+    var swiftUI: Font.Weight {
+        switch self {
+        case .light: .light
+        case .regular: .regular
+        case .medium: .medium
+        case .semibold: .semibold
+        case .bold: .bold
+        }
+    }
+    var familyWeight: Int {
+        switch self {
+        case .light: 3
+        case .regular: 5
+        case .medium: 6
+        case .semibold: 8
+        case .bold: 9
+        }
+    }
+}
+
+struct EditorColor: Codable, Equatable {
+    var red: Double
+    var green: Double
+    var blue: Double
+    var native: NSColor { NSColor(srgbRed: red, green: green, blue: blue, alpha: 1) }
+    init?(_ color: Color) {
+        guard let rgb = NSColor(color).usingColorSpace(.sRGB) else { return nil }
+        red = rgb.redComponent
+        green = rgb.greenComponent
+        blue = rgb.blueComponent
+    }
+}
+
 @MainActor
 final class Preferences: ObservableObject {
     @Published var models: [ModelLocation] { didSet { save() } }
+    @Published var defaultModelID: UUID? { didSet { save() } }
     @Published var glossary: [GlossaryTerm] { didSet { save() } }
     @Published var python: String { didSet { save() } }
     @Published var unloadSeconds: Int { didSet { save() } }
@@ -23,19 +78,30 @@ final class Preferences: ObservableObject {
     @Published var sourceFontSize: Double { didSet { save() } }
     @Published var outputFontFamily: String { didSet { save() } }
     @Published var outputFontSize: Double { didSet { save() } }
+    @Published var sourceFontWeight: EditorWeight { didSet { save() } }
+    @Published var outputFontWeight: EditorWeight { didSet { save() } }
+    @Published var sourceTextColor: EditorColor? { didSet { save() } }
+    @Published var outputTextColor: EditorColor? { didSet { save() } }
 
-    var sourceFont: NSFont { editorFont(family: sourceFontFamily, size: sourceFontSize) }
-    var outputFont: NSFont { editorFont(family: outputFontFamily, size: outputFontSize) }
+    var preferredModelID: UUID? {
+        models.first(where: { $0.id == defaultModelID })?.id ?? models.first?.id
+    }
+    var sourceFont: NSFont { editorFont(family: sourceFontFamily, size: sourceFontSize, weight: sourceFontWeight) }
+    var outputFont: NSFont { editorFont(family: outputFontFamily, size: outputFontSize, weight: outputFontWeight) }
+    var sourceColor: NSColor { sourceTextColor?.native ?? .textColor }
+    var outputColor: NSColor { outputTextColor?.native ?? .textColor }
 
-    private func editorFont(family: String, size: Double) -> NSFont {
+    private func editorFont(family: String, size: Double, weight: EditorWeight) -> NSFont {
         let size = min(40, max(10, size))
-        return NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size)
-            ?? .systemFont(ofSize: size)
+        return NSFontManager.shared.font(withFamily: family, traits: weight == .bold ? [.boldFontMask] : [],
+                                         weight: weight.familyWeight, size: size)
+            ?? .systemFont(ofSize: size, weight: weight.native)
     }
 
     init() {
         let defaults = UserDefaults.standard
         models = defaults.data(forKey: "models").flatMap { try? JSONDecoder().decode([ModelLocation].self, from: $0) } ?? []
+        defaultModelID = defaults.string(forKey: "defaultModelID").flatMap(UUID.init(uuidString:))
         glossary = defaults.data(forKey: "glossary").flatMap { try? JSONDecoder().decode([GlossaryTerm].self, from: $0) } ?? []
         let resource = Bundle.main.url(forResource: "python-path", withExtension: "txt")
         let bundledPath = resource.flatMap { try? String(contentsOf: $0, encoding: .utf8) }?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -45,11 +111,17 @@ final class Preferences: ObservableObject {
         sourceFontSize = defaults.object(forKey: "sourceFontSize") as? Double ?? 16
         outputFontFamily = defaults.string(forKey: "outputFontFamily") ?? ""
         outputFontSize = defaults.object(forKey: "outputFontSize") as? Double ?? 16
+        sourceFontWeight = defaults.string(forKey: "sourceFontWeight").flatMap(EditorWeight.init(rawValue:)) ?? .regular
+        outputFontWeight = defaults.string(forKey: "outputFontWeight").flatMap(EditorWeight.init(rawValue:)) ?? .regular
+        sourceTextColor = defaults.data(forKey: "sourceTextColor").flatMap { try? JSONDecoder().decode(EditorColor.self, from: $0) }
+        outputTextColor = defaults.data(forKey: "outputTextColor").flatMap { try? JSONDecoder().decode(EditorColor.self, from: $0) }
+        if !models.contains(where: { $0.id == defaultModelID }) { defaultModelID = nil }
     }
 
     private func save() {
         let defaults = UserDefaults.standard
         defaults.set(try? JSONEncoder().encode(models), forKey: "models")
+        defaults.set(defaultModelID?.uuidString, forKey: "defaultModelID")
         defaults.set(try? JSONEncoder().encode(glossary), forKey: "glossary")
         defaults.set(python, forKey: "python")
         defaults.set(unloadSeconds, forKey: "unloadSeconds")
@@ -57,6 +129,10 @@ final class Preferences: ObservableObject {
         defaults.set(sourceFontSize, forKey: "sourceFontSize")
         defaults.set(outputFontFamily, forKey: "outputFontFamily")
         defaults.set(outputFontSize, forKey: "outputFontSize")
+        defaults.set(sourceFontWeight.rawValue, forKey: "sourceFontWeight")
+        defaults.set(outputFontWeight.rawValue, forKey: "outputFontWeight")
+        defaults.set(sourceTextColor.flatMap { try? JSONEncoder().encode($0) }, forKey: "sourceTextColor")
+        defaults.set(outputTextColor.flatMap { try? JSONEncoder().encode($0) }, forKey: "outputTextColor")
     }
 
     func addModel() {
@@ -93,13 +169,20 @@ struct PreferencesView: View {
         TabView {
             Form {
                 Section("モデル") {
+                    Picker("デフォルト", selection: $preferences.defaultModelID) {
+                        Text("先頭のモデル").tag(nil as UUID?)
+                        ForEach(preferences.models) { Text($0.tag).tag(Optional($0.id)) }
+                    }.pickerStyle(.menu)
                     ForEach($preferences.models) { $model in
                         HStack {
                             VStack(alignment: .leading, spacing: 6) {
                                 TextField("タグ", text: $model.tag)
                                 TextField("ディレクトリ", text: $model.path).font(.caption)
                             }
-                            Button(role: .destructive) { preferences.models.removeAll { $0.id == model.id } } label: {
+                            Button(role: .destructive) {
+                                if preferences.defaultModelID == model.id { preferences.defaultModelID = nil }
+                                preferences.models.removeAll { $0.id == model.id }
+                            } label: {
                                 Image(systemName: "minus.circle")
                             }.buttonStyle(.borderless).help("モデルを一覧から削除")
                         }
@@ -120,9 +203,9 @@ struct PreferencesView: View {
             }.formStyle(.grouped).tabItem { Label("一般", systemImage: "gearshape") }
             Form {
                 fontSection("原文", family: $preferences.sourceFontFamily, size: $preferences.sourceFontSize,
-                            font: preferences.sourceFont)
+                            weight: $preferences.sourceFontWeight, color: $preferences.sourceTextColor, font: preferences.sourceFont)
                 fontSection("訳文", family: $preferences.outputFontFamily, size: $preferences.outputFontSize,
-                            font: preferences.outputFont)
+                            weight: $preferences.outputFontWeight, color: $preferences.outputTextColor, font: preferences.outputFont)
             }.formStyle(.grouped).tabItem { Label("文字", systemImage: "textformat") }
             VStack(spacing: 12) {
                 HStack {
@@ -154,7 +237,8 @@ struct PreferencesView: View {
         .preferredColorScheme(.light)
     }
 
-    private func fontSection(_ title: String, family: Binding<String>, size: Binding<Double>, font: NSFont) -> some View {
+    private func fontSection(_ title: String, family: Binding<String>, size: Binding<Double>,
+                             weight: Binding<EditorWeight>, color: Binding<EditorColor?>, font: NSFont) -> some View {
         Section(title) {
             Picker("フォント", selection: family) {
                 Text("システム").tag("")
@@ -163,7 +247,19 @@ struct PreferencesView: View {
             Stepper(value: size, in: 10...40, step: 1) {
                 Text("サイズ  \(Int(size.wrappedValue)) pt")
             }
+            Picker("ウェイト", selection: weight) {
+                ForEach(EditorWeight.allCases) { Text($0.label).tag($0) }
+            }.pickerStyle(.menu)
+            HStack {
+                ColorPicker("文字色", selection: Binding(
+                    get: { Color(nsColor: color.wrappedValue?.native ?? .textColor) },
+                    set: { color.wrappedValue = EditorColor($0) }
+                ), supportsOpacity: false)
+                Button("リセット") { color.wrappedValue = nil }
+                    .disabled(color.wrappedValue == nil)
+            }
             Text("あいうえお 漢字 ABC abc 123").font(Font(font))
+                .foregroundStyle(Color(nsColor: color.wrappedValue?.native ?? .textColor))
         }
     }
 }

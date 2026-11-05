@@ -7,6 +7,7 @@ struct InputEditor: NSViewRepresentable {
     @Binding var text: String
     var editable = true
     var font: NSFont = .systemFont(ofSize: 16)
+    var textColor: NSColor = .textColor
     var submit: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -20,7 +21,10 @@ struct InputEditor: NSViewRepresentable {
         editor.isAutomaticDashSubstitutionEnabled = false
         editor.isAutomaticTextReplacementEnabled = false
         editor.font = font
-        editor.textContainerInset = NSSize(width: 12, height: 14)
+        editor.textColor = textColor
+        editor.textContainerInset = NSSize(width: 16, height: 18)
+        editor.drawsBackground = false
+        scroll.drawsBackground = false
         editor.isVerticallyResizable = true
         editor.isHorizontallyResizable = false
         editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -42,7 +46,9 @@ struct InputEditor: NSViewRepresentable {
             editor.setSelectedRange(NSRange(location: min(selection.location, (text as NSString).length), length: 0))
         }
         if editor.font != font { editor.font = font }
+        if editor.textColor != textColor { editor.textColor = textColor }
         editor.typingAttributes[.font] = font
+        editor.typingAttributes[.foregroundColor] = textColor
     }
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: InputEditor

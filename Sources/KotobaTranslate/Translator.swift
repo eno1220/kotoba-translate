@@ -55,7 +55,8 @@ final class Translator: ObservableObject {
 
     init(preferences: Preferences) {
         self.preferences = preferences
-        modelID = preferences.models.first?.id
+        modelID = preferences.preferredModelID
+        optionsExpanded = preferences.models.isEmpty
         settingsSubscription = preferences.$unloadSeconds.dropFirst().sink { [weak self] seconds in
             Task { @MainActor in self?.scheduleUnload(seconds: seconds) }
         }

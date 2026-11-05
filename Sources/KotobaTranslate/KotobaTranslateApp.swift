@@ -21,6 +21,7 @@ struct KotobaTranslateApp: App {
                 .onAppear { NSApplication.shared.activate(ignoringOtherApps: true) }
         }
         .defaultSize(width: 1060, height: 720)
+        .windowToolbarStyle(.unified)
         Settings { PreferencesView(preferences: preferences) }
     }
 }
