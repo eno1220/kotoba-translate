@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Darwin
 import Foundation
+import UniformTypeIdentifiers
 
 struct WorkerEvent: Decodable {
     var event: String
@@ -22,14 +23,14 @@ struct WorkerEvent: Decodable {
 final class Translator: ObservableObject {
     @Published var input = "" { didSet {
         if fetchingArticle { cancelArticleFetch() }
-        if importingPDF { cancelPDFImport() }
+        if importingFile { cancelFileImport() }
         updateInputStatistics()
     } }
-    @Published private(set) var importingPDF = false
-    @Published private(set) var pdfProgress = ""
-    @Published var pdfError: String?
-    private var pdfTask: Task<Void, Never>?
-    private var pdfRevision = UUID()
+    @Published private(set) var importingFile = false
+    @Published private(set) var fileProgress = ""
+    @Published var fileError: String?
+    private var fileTask: Task<Void, Never>?
+    private var fileRevision = UUID()
     @Published var articleURL = ""
     @Published private(set) var fetchingArticle = false
     @Published var articleError: String?
@@ -45,6 +46,18 @@ final class Translator: ObservableObject {
     @Published var target = "ja" { didSet { initialTargetChosen = true } }
     @Published var form = ""
     @Published var context = ""
+    @Published var presetID: String?
+    var selectedPreset: ContextPreset? { preferences.contextPresets.first { $0.id == presetID } }
+    var translationContext: String {
+        [selectedPreset?.contextDescription ?? "", context].filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.joined(separator: "\n\n")
+    }
+
+    func applyAppPreset(bundleID: String?) {
+        guard let bundleID,
+              let id = preferences.appPresetRules.first(where: { $0.id == bundleID })?.presetID,
+              preferences.contextPresets.contains(where: { $0.id == id }) else { return }
+        presetID = id
+    }
     @Published var useGlossary = true
     @Published var optionsExpanded = false
     @Published var maxTokens = 2048
@@ -86,13 +99,13 @@ final class Translator: ObservableObject {
         quitSubscription = NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
             .sink { [weak self] _ in
                 self?.cancelArticleFetch()
-                self?.cancelPDFImport()
+                self?.cancelFileImport()
                 self?.cancel()
             }
     }
 
     var canTranslate: Bool {
-        !busy && !fetchingArticle && !importingPDF && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !busy && !fetchingArticle && !importingFile && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         preferences.models.contains { $0.id == modelID } && maxTokens > 0 && maxTokens < 32768 &&
         temperature.isFinite && (0...2).contains(temperature)
     }
@@ -100,8 +113,8 @@ final class Translator: ObservableObject {
     func importSelection(_ text: String) {
         if busy { cancel() }
         cancelArticleFetch()
-        cancelPDFImport()
-        pdfError = nil
+        cancelFileImport()
+        fileError = nil
         error = nil
         articleError = nil
         sourcePreview = false
@@ -119,7 +132,7 @@ final class Translator: ObservableObject {
     }
 
     func fetchArticle() {
-        guard !fetchingArticle, !importingPDF, !busy else { return }
+        guard !fetchingArticle, !importingFile, !busy else { return }
         let url: URL
         do { url = try ArticleFetcher.url(from: articleURL) }
         catch { articleError = error.localizedDescription; return }
@@ -158,63 +171,72 @@ final class Translator: ObservableObject {
         }
     }
 
-    func choosePDF() {
-        guard !busy, !fetchingArticle, !importingPDF else { return }
+    func chooseFile() {
+        guard !busy, !fetchingArticle, !importingFile else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.pdf]
+        panel.allowedContentTypes = [.pdf, .plainText] + TextFileImporter.extensions.compactMap { UTType(filenameExtension: $0) }
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.prompt = "取り込む"
-        panel.message = "PDFをMarkdownに変換し、原文を置き換えます。処理は端末内で完結します。"
+        panel.message = "PDFまたはテキストファイルを読み込み、原文を置き換えます。処理は端末内で完結します。"
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in self?.importPDF(url) }
+            Task { @MainActor in self?.importFile(url) }
         }
     }
 
-    func importPDF(_ url: URL) {
-        guard !busy, !fetchingArticle, !importingPDF else { return }
-        pdfError = nil
-        importingPDF = true
-        pdfProgress = "PDFを読み込み中"
+    func importFile(_ url: URL) {
+        guard !busy, !fetchingArticle, !importingFile else { return }
+        fileError = nil
+        importingFile = true
+        fileProgress = "ファイルを読み込み中"
         let revision = UUID()
-        pdfRevision = revision
-        pdfTask = Task.detached(priority: .userInitiated) { [weak self] in
+        fileRevision = revision
+        fileTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                let result = try await PDFImporter.convert(url) { current, total in
-                    await self?.updatePDFProgress(current, total: total, revision: revision)
+                let text: String
+                let status: String
+                if url.pathExtension.lowercased() == "pdf" {
+                    let result = try await PDFImporter.convert(url) { current, total in
+                        await self?.updateFileProgress(current, total: total, revision: revision)
+                    }
+                    text = result.markdown
+                    status = "PDF \(result.pages)ページ取り込み済み（OCR \(result.ocrPages)）"
+                } else {
+                    text = try TextFileImporter.read(url)
+                    status = "テキスト取り込み済み"
                 }
                 try Task.checkCancellation()
-                await self?.finishPDFImport(result, error: nil, revision: revision)
+                await self?.finishFileImport(text, status: status, error: nil, revision: revision)
             } catch {
                 guard !Task.isCancelled else { return }
-                await self?.finishPDFImport(nil, error: error.localizedDescription, revision: revision)
+                await self?.finishFileImport(nil, status: "", error: error.localizedDescription, revision: revision)
             }
         }
     }
 
-    func cancelPDFImport() {
-        pdfRevision = UUID()
-        pdfTask?.cancel()
-        pdfTask = nil
-        importingPDF = false
-        pdfProgress = ""
+    func cancelFileImport() {
+        fileRevision = UUID()
+        fileTask?.cancel()
+        fileTask = nil
+        importingFile = false
+        fileProgress = ""
     }
 
-    private func updatePDFProgress(_ current: Int, total: Int, revision: UUID) {
-        guard revision == pdfRevision else { return }
-        pdfProgress = "PDF \(current)/\(total)ページ"
+    private func updateFileProgress(_ current: Int, total: Int, revision: UUID) {
+        guard revision == fileRevision else { return }
+        fileProgress = "PDF \(current)/\(total)ページ"
     }
 
-    private func finishPDFImport(_ result: PDFImporter.Result?, error: String?, revision: UUID) {
-        guard revision == pdfRevision else { return }
-        pdfTask = nil
-        importingPDF = false
-        pdfProgress = ""
-        pdfError = error
-        if let result {
-            importSelection(result.markdown)
-            status = "PDF \(result.pages)ページ取り込み済み（OCR \(result.ocrPages)）"
+    private func finishFileImport(_ text: String?, status: String, error: String?, revision: UUID) {
+        guard revision == fileRevision else { return }
+        fileTask = nil
+        importingFile = false
+        fileProgress = ""
+        fileError = error
+        if let text {
+            importSelection(text)
+            self.status = status
         }
     }
 
@@ -258,7 +280,7 @@ final class Translator: ObservableObject {
         }
         let request = TranslationRequest(
             model: location.path, text: input, source: source, target: target,
-            form: target == "ja" ? form : "", context: context,
+            form: target == "ja" ? form : "", context: translationContext,
             glossary: terms.map { ["source": $0.source, "target": $0.target] },
             max_tokens: maxTokens, temperature: temperature)
         output = ""

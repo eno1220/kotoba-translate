@@ -36,6 +36,7 @@ struct ServerCheck {
         preferences.glossary = []
         preferences.unloadSeconds = 60
         let engine = Translator(preferences: preferences)
+        try await checkPresetsAndFiles(preferences, engine: engine, directory: directory)
         engine.input = "keep input"
         engine.output = "keep output"
         engine.context = "keep context"
@@ -135,6 +136,75 @@ struct ServerCheck {
         try await Task.sleep(for: .milliseconds(100))
         try require(!engine.busy && !engine.loaded, "server stop cancellation")
         print("PASS: auth, CORS, models, JSON/SSE, validation, limits, worker reuse, busy, cancellation/disconnect/stop, failure/crash, idle unload/reload, editor isolation (mock inference)")
+    }
+
+
+    @MainActor
+    static func checkPresetsAndFiles(_ preferences: Preferences, engine: Translator, directory: URL) async throws {
+        let custom = ContextPreset(emoji: "🧪", name: "検証", contextDescription: "This is a technical reference for software developers.")
+        preferences.customPresets = [custom]
+        preferences.appPresetRules = [
+            AppPresetRule(id: "test.editor", name: "Editor", presetID: custom.id),
+            AppPresetRule(id: "test.off", name: "Off", presetID: nil),
+            AppPresetRule(id: "test.missing", name: "Missing", presetID: "deleted")
+        ]
+        engine.context = "Temporary context"
+        engine.applyAppPreset(bundleID: "test.editor")
+        try require(engine.presetID == custom.id && engine.translationContext == custom.contextDescription + "\n\nTemporary context", "app preset and additional context")
+        for id in [nil, "unknown", "test.off", "test.missing"] as [String?] {
+            engine.applyAppPreset(bundleID: id)
+            try require(engine.presetID == custom.id, "no automatic application preserves manual selection")
+        }
+        let reloaded = Preferences()
+        try require(reloaded.customPresets == [custom] && reloaded.appPresetRules.first?.presetID == custom.id, "preset and app-rule persistence")
+        try require(ContextPreset.builtIn.count == 6 && Set(ContextPreset.builtIn.map(\.id)).count == 6, "built-in preset identifiers")
+        preferences.removePreset(custom.id)
+        try require(preferences.appPresetRules.first?.presetID == nil && engine.selectedPreset == nil && engine.translationContext == "Temporary context", "deleted preset removes automatic rule and context")
+        engine.presetID = nil
+        let sample = "# 見出し\nHello, world.\n日本語の文章です。\n"
+        let url = directory.appendingPathComponent("sample.md")
+        for encoding in [String.Encoding.utf8, .utf16, .utf32, .shiftJIS] {
+            try sample.data(using: encoding)!.write(to: url)
+            try require(try TextFileImporter.read(url) == sample, "text encoding \(encoding)")
+        }
+        let invalid = directory.appendingPathComponent("invalid.txt")
+        try Data([0, 1, 2, 3]).write(to: invalid)
+        do { _ = try TextFileImporter.read(invalid); throw checkFailure("binary accepted") }
+        catch TextFileImporter.ImportError.unsupported { }
+        try Data().write(to: invalid)
+        do { _ = try TextFileImporter.read(invalid); throw checkFailure("empty accepted") }
+        catch TextFileImporter.ImportError.empty { }
+        try Data(repeating: 65, count: TextFileImporter.byteLimit + 1).write(to: invalid)
+        do { _ = try TextFileImporter.read(invalid); throw checkFailure("oversized accepted") }
+        catch TextFileImporter.ImportError.tooLarge { }
+        try Data(repeating: 65, count: 2_000_001).write(to: invalid)
+        do { _ = try TextFileImporter.read(invalid); throw checkFailure("character limit ignored") }
+        catch TextFileImporter.ImportError.tooLarge { }
+        engine.input = "old"
+        engine.output = "old translation"
+        engine.importFile(url)
+        for _ in 0..<200 {
+            if !engine.importingFile { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try require(engine.input == sample && engine.output.isEmpty && !engine.loaded, "file import without inference")
+        engine.importFile(url)
+        engine.input = "edited during import"
+        try await Task.sleep(for: .milliseconds(100))
+        try require(engine.input == "edited during import" && !engine.importingFile, "cancel stale file result on edit")
+        engine.output = "preserve translation"
+        engine.importFile(invalid)
+        for _ in 0..<200 {
+            if !engine.importingFile { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try require(engine.fileError != nil && engine.input == "edited during import" && engine.output == "preserve translation", "failed import preserves editors")
+        engine.fileError = nil
+        print("PASS: preset/application rules, persistence/deletion, extra context, UTF-8/16/32/Shift JIS, binary/empty/size limits, file import/cancellation/editor preservation")
+    }
+
+    static func checkFailure(_ message: String) -> NSError {
+        NSError(domain: "PresetFileCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     static func require(_ condition: Bool, _ label: String) throws {

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ModelLocation: Identifiable, Codable, Equatable {
     var id = UUID()
@@ -28,6 +29,33 @@ struct EditorColor: Codable, Equatable {
 
 @MainActor
 final class Preferences: ObservableObject {
+    @Published var customPresets: [ContextPreset] { didSet { saveEncoded(customPresets, forKey: "customPresets") } }
+    @Published var appPresetRules: [AppPresetRule] { didSet { saveEncoded(appPresetRules, forKey: "appPresetRules") } }
+    var contextPresets: [ContextPreset] { ContextPreset.builtIn + customPresets }
+
+    func removePreset(_ id: String) {
+        customPresets.removeAll { $0.id == id }
+        for index in appPresetRules.indices where appPresetRules[index].presetID == id {
+            appPresetRules[index].presetID = nil
+        }
+    }
+
+    func addPresetApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.prompt = "追加"
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url, let bundle = Bundle(url: url),
+                  let id = bundle.bundleIdentifier else { return }
+            Task { @MainActor in
+                guard let self, !self.appPresetRules.contains(where: { $0.id == id }) else { return }
+                let name = FileManager.default.displayName(atPath: url.path)
+                self.appPresetRules.append(AppPresetRule(id: id, name: name))
+            }
+        }
+    }
+
     @Published var models: [ModelLocation] { didSet { saveEncoded(models, forKey: "models") } }
     @Published var defaultModelID: UUID? { didSet { UserDefaults.standard.set(defaultModelID?.uuidString, forKey: "defaultModelID") } }
     @Published var glossary: [GlossaryTerm] { didSet { saveEncoded(glossary, forKey: "glossary") } }
@@ -64,6 +92,8 @@ final class Preferences: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
+        customPresets = defaults.data(forKey: "customPresets").flatMap { try? JSONDecoder().decode([ContextPreset].self, from: $0) } ?? []
+        appPresetRules = defaults.data(forKey: "appPresetRules").flatMap { try? JSONDecoder().decode([AppPresetRule].self, from: $0) } ?? []
         models = defaults.data(forKey: "models").flatMap { try? JSONDecoder().decode([ModelLocation].self, from: $0) } ?? []
         defaultModelID = defaults.string(forKey: "defaultModelID").flatMap(UUID.init(uuidString:))
         glossary = defaults.data(forKey: "glossary").flatMap { try? JSONDecoder().decode([GlossaryTerm].self, from: $0) } ?? []
@@ -152,6 +182,8 @@ struct PreferencesView: View {
                     }
                 }
             }.formStyle(.grouped).tabItem { Label("一般", systemImage: "gearshape") }
+            PresetSettingsView(preferences: preferences)
+                .tabItem { Label("プリセット", systemImage: "face.smiling") }
             Form {
                 fontSection("原文", family: $preferences.sourceFontFamily, size: $preferences.sourceFontSize,
                             face: $preferences.sourceFontFace, color: $preferences.sourceTextColor, font: preferences.sourceFont)
@@ -184,7 +216,7 @@ struct PreferencesView: View {
             }.padding(20).textFieldStyle(.roundedBorder)
                 .tabItem { Label("辞書", systemImage: "character.book.closed") }
         }
-        .frame(width: 620, height: 440)
+        .frame(width: 680, height: 540)
         .preferredColorScheme(.light)
     }
 
