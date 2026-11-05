@@ -22,8 +22,14 @@ struct WorkerEvent: Decodable {
 final class Translator: ObservableObject {
     @Published var input = "" { didSet {
         if fetchingArticle { cancelArticleFetch() }
+        if importingPDF { cancelPDFImport() }
         updateInputStatistics()
     } }
+    @Published private(set) var importingPDF = false
+    @Published private(set) var pdfProgress = ""
+    @Published var pdfError: String?
+    private var pdfTask: Task<Void, Never>?
+    private var pdfRevision = UUID()
     @Published var articleURL = ""
     @Published private(set) var fetchingArticle = false
     @Published var articleError: String?
@@ -44,11 +50,18 @@ final class Translator: ObservableObject {
     @Published var maxTokens = 2048
     @Published var temperature = 0.0
     @Published private(set) var busy = false
+    @Published private(set) var startedAt: Date?
     @Published private(set) var loaded = false
     @Published private(set) var status = ""
     @Published private(set) var progress: Double?
     @Published private(set) var metrics: WorkerEvent?
     @Published var error: String?
+
+    private var apiCompletion: CheckedContinuation<(String, WorkerEvent), Error>?
+    private var apiDelta: ((String) -> Void)?
+    private var apiOutput = ""
+    private var apiRequestID: UUID?
+    var servingAPI: Bool { apiRequestID != nil }
 
     private var process: Process?
     private var stdin: FileHandle?
@@ -73,12 +86,13 @@ final class Translator: ObservableObject {
         quitSubscription = NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
             .sink { [weak self] _ in
                 self?.cancelArticleFetch()
-                self?.stopProcess()
+                self?.cancelPDFImport()
+                self?.cancel()
             }
     }
 
     var canTranslate: Bool {
-        !busy && !fetchingArticle && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !busy && !fetchingArticle && !importingPDF && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         preferences.models.contains { $0.id == modelID } && maxTokens > 0 && maxTokens < 32768 &&
         temperature.isFinite && (0...2).contains(temperature)
     }
@@ -86,6 +100,8 @@ final class Translator: ObservableObject {
     func importSelection(_ text: String) {
         if busy { cancel() }
         cancelArticleFetch()
+        cancelPDFImport()
+        pdfError = nil
         error = nil
         articleError = nil
         sourcePreview = false
@@ -103,7 +119,7 @@ final class Translator: ObservableObject {
     }
 
     func fetchArticle() {
-        guard !fetchingArticle, !busy else { return }
+        guard !fetchingArticle, !importingPDF, !busy else { return }
         let url: URL
         do { url = try ArticleFetcher.url(from: articleURL) }
         catch { articleError = error.localizedDescription; return }
@@ -139,6 +155,66 @@ final class Translator: ObservableObject {
             sourcePreview = false
             input = markdown
             focusInput()
+        }
+    }
+
+    func choosePDF() {
+        guard !busy, !fetchingArticle, !importingPDF else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.prompt = "取り込む"
+        panel.message = "PDFをMarkdownに変換し、原文を置き換えます。処理は端末内で完結します。"
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in self?.importPDF(url) }
+        }
+    }
+
+    func importPDF(_ url: URL) {
+        guard !busy, !fetchingArticle, !importingPDF else { return }
+        pdfError = nil
+        importingPDF = true
+        pdfProgress = "PDFを読み込み中"
+        let revision = UUID()
+        pdfRevision = revision
+        pdfTask = Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                let result = try await PDFImporter.convert(url) { current, total in
+                    await self?.updatePDFProgress(current, total: total, revision: revision)
+                }
+                try Task.checkCancellation()
+                await self?.finishPDFImport(result, error: nil, revision: revision)
+            } catch {
+                guard !Task.isCancelled else { return }
+                await self?.finishPDFImport(nil, error: error.localizedDescription, revision: revision)
+            }
+        }
+    }
+
+    func cancelPDFImport() {
+        pdfRevision = UUID()
+        pdfTask?.cancel()
+        pdfTask = nil
+        importingPDF = false
+        pdfProgress = ""
+    }
+
+    private func updatePDFProgress(_ current: Int, total: Int, revision: UUID) {
+        guard revision == pdfRevision else { return }
+        pdfProgress = "PDF \(current)/\(total)ページ"
+    }
+
+    private func finishPDFImport(_ result: PDFImporter.Result?, error: String?, revision: UUID) {
+        guard revision == pdfRevision else { return }
+        pdfTask = nil
+        importingPDF = false
+        pdfProgress = ""
+        pdfError = error
+        if let result {
+            importSelection(result.markdown)
+            status = "PDF \(result.pages)ページ取り込み済み（OCR \(result.ocrPages)）"
         }
     }
 
@@ -180,25 +256,57 @@ final class Translator: ObservableObject {
             error = "辞書の原語と訳語を入力してください。"
             return
         }
+        let request = TranslationRequest(
+            model: location.path, text: input, source: source, target: target,
+            form: target == "ja" ? form : "", context: context,
+            glossary: terms.map { ["source": $0.source, "target": $0.target] },
+            max_tokens: maxTokens, temperature: temperature)
+        output = ""
+        begin(request)
+    }
+
+    func translateAPI(_ request: TranslationRequest, delta: @escaping (String) -> Void) async throws -> (String, WorkerEvent) {
+        guard !busy else { throw APIError(status: 429, message: "別の翻訳を実行中です。完了後に再試行してください。") }
+        try Task.checkCancellation()
+        let requestID = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                apiRequestID = requestID
+                apiCompletion = continuation
+                apiDelta = delta
+                apiOutput = ""
+                begin(request)
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                if self?.apiRequestID == requestID { self?.cancel() }
+            }
+        }
+    }
+
+    private func finishAPI(_ result: Result<(String, WorkerEvent), Error>) {
+        let completion = apiCompletion
+        apiCompletion = nil
+        apiDelta = nil
+        apiOutput = ""
+        apiRequestID = nil
+        completion?.resume(with: result)
+    }
+
+    private func begin(_ request: TranslationRequest) {
         idleTask?.cancel()
         busy = true
-        output = ""
-        error = nil
+        startedAt = Date()
+        if !servingAPI { error = nil }
         metrics = nil
         progress = nil
         status = "モデルを読み込み中"
         do {
-            if loadedPath != location.path || pythonPath != preferences.python || process?.isRunning != true {
+            if loadedPath != request.model || pythonPath != preferences.python || process?.isRunning != true {
                 stopProcess()
-                try startProcess(model: location.path)
+                try startProcess(model: request.model)
             }
-            let request: [String: Any] = [
-                "model": location.path, "text": input, "source": source, "target": target,
-                "form": target == "ja" ? form : "", "context": context,
-                "glossary": terms.map { ["source": $0.source, "target": $0.target] },
-                "max_tokens": maxTokens, "temperature": temperature
-            ]
-            var data = try JSONSerialization.data(withJSONObject: request)
+            var data = try JSONEncoder().encode(request)
             data.append(0x0A)
             // Even a large source/glossary must not block the main thread on a full pipe.
             let handle = stdin
@@ -208,17 +316,22 @@ final class Translator: ObservableObject {
                 catch { await self?.writeFailed(error.localizedDescription, ticket: ticket) }
             }
         } catch {
-            self.error = error.localizedDescription
-            busy = false
-            status = ""
-            stopProcess()
+            fail(error)
         }
+    }
+
+    private func fail(_ failure: Error) {
+        if servingAPI { finishAPI(.failure(failure)) }
+        else { error = failure.localizedDescription }
+        busy = false
+        progress = nil
+        status = ""
+        stopProcess()
     }
 
     private func writeFailed(_ message: String, ticket: UUID) {
         guard ticket == identity else { return }
-        error = message
-        cancel()
+        fail(APIError(status: 500, message: message))
     }
 
     private func startProcess(model: String) throws {
@@ -289,21 +402,21 @@ final class Translator: ObservableObject {
             loaded = true
             status = "翻訳中"
             progress = nil
-            output += event.text ?? ""
+            if servingAPI {
+                let text = event.text ?? ""
+                apiOutput += text
+                apiDelta?(text)
+            } else { output += event.text ?? "" }
             if event.tokens != nil { metrics = event }
         case "done":
             metrics = event
             busy = false
             progress = nil
             status = event.finish_reason == "length" ? "生成上限に到達" : "完了"
+            if servingAPI { finishAPI(.success((apiOutput, event))) }
             scheduleUnload(seconds: preferences.unloadSeconds)
         case "error":
-            error = event.message
-            busy = false
-            status = ""
-            progress = nil
-            // Also releases any partially loaded tensors after a load failure.
-            stopProcess()
+            fail(APIError(status: 500, message: event.message ?? "翻訳に失敗しました。"))
         default: break
         }
     }
@@ -311,15 +424,14 @@ final class Translator: ObservableObject {
     private func exited(ticket: UUID, details: String) {
         guard ticket == identity else { return }
         if busy {
-            error = details.isEmpty ? "Pythonプロセスが終了しました。" : details
-            status = ""
+            fail(APIError(status: 500, message: details.isEmpty ? "Pythonプロセスが終了しました。" : servingAPI ? "Pythonプロセスが終了しました。実行環境とモデルを確認してください。" : details))
+        } else {
+            stopProcess()
         }
-        busy = false
-        progress = nil
-        stopProcess()
     }
 
     func cancel() {
+        if servingAPI { finishAPI(.failure(CancellationError())) }
         stopProcess()
         busy = false
         progress = nil

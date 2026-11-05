@@ -3,7 +3,7 @@
 ## Scope and architecture
 - Personal-use macOS app for Apple silicon, built with SwiftUI and AppKit (macOS 14+).
 - Support only PLaMo 3 Translate MLX models. Users download models themselves; never add automatic model downloads or support for other models/formats.
-- Use `uv` for Python dependencies. Keep inference in a private Python subprocess using `mlx-lm`, offline mode, and JSON Lines over stdin/stdout. Send diagnostics to stderr; no HTTP server.
+- Use `uv` for Python dependencies. Keep inference in a private Python subprocess using `mlx-lm`, offline mode, and JSON Lines over stdin/stdout. Send diagnostics to stderr. The optional OpenAI-compatible HTTP API is hosted by the Swift app on loopback only; never expose the inference worker directly.
 - Keep everything outside inference lightweight. Avoid unnecessary dependencies, abstractions, compatibility layers, and test infrastructure.
 
 ## Translation behavior

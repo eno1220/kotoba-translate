@@ -35,6 +35,8 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button { openWindow(id: "server") } label: { Label("ローカルAPI", systemImage: "network") }
+                    .help("他アプリから翻訳APIに接続")
                 SettingsLink { Label("設定", systemImage: "gearshape") }
                     .labelStyle(.iconOnly).help("設定（⌘,）")
             }
@@ -53,6 +55,9 @@ struct ContentView: View {
         .alert("記事の取得エラー", isPresented: Binding(get: { translator.articleError != nil }, set: { if !$0 { translator.articleError = nil } })) {
             Button("OK") { translator.articleError = nil }
         } message: { Text(translator.articleError ?? "") }
+        .alert("PDFの取り込みエラー", isPresented: Binding(get: { translator.pdfError != nil }, set: { if !$0 { translator.pdfError = nil } })) {
+            Button("OK") { translator.pdfError = nil }
+        } message: { Text(translator.pdfError ?? "") }
     }
 
     private var sourcePane: some View {
@@ -108,13 +113,13 @@ struct ContentView: View {
                 .accessibilityLabel("記事のURL")
                 .focused($articleURLFocused)
                 .onSubmit { translator.fetchArticle() }
-                .disabled(translator.fetchingArticle || translator.busy)
+                .disabled(translator.fetchingArticle || translator.importingPDF || translator.busy)
             if translator.fetchingArticle {
                 ProgressView().controlSize(.small).accessibilityLabel("記事を取得中")
                 Button("中止", action: translator.cancelArticleFetch)
             } else {
                 Button("取得", action: translator.fetchArticle)
-                    .disabled(translator.articleURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || translator.busy)
+                    .disabled(translator.articleURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || translator.importingPDF || translator.busy)
                     .help("記事本文をMarkdownに変換し、原文を置き換えます")
             }
         }
@@ -228,6 +233,7 @@ struct ContentView: View {
                     if translator.fetchingArticle { ProgressView().controlSize(.small) }
                 }
             }
+            .disabled(translator.importingPDF || translator.busy)
             .popover(isPresented: $articlePopoverPresented) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("記事を取得").font(.headline)
@@ -236,6 +242,15 @@ struct ContentView: View {
                 .padding(16).frame(width: 440)
                 .onAppear { articleURLFocused = true }
                 .onDisappear { translator.focusInput() }
+            }
+            if translator.importingPDF {
+                ProgressView().controlSize(.small)
+                Text(translator.pdfProgress).font(.caption.monospacedDigit())
+                Button("中止", action: translator.cancelPDFImport)
+            } else {
+                Button("PDFを取り込む…", systemImage: "doc.badge.plus", action: translator.choosePDF)
+                    .disabled(translator.busy || translator.fetchingArticle)
+                    .help("PDFを端末内でMarkdownに変換し、原文を置き換えます")
             }
             Spacer(minLength: 12)
             if translator.busy {
