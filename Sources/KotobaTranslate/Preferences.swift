@@ -147,77 +147,139 @@ struct PreferencesView: View {
     @ObservedObject var preferences: Preferences
     private static let fontFamilies = NSFontManager.shared.availableFontFamilies.sorted()
     var body: some View {
-        TabView {
-            Form {
-                Section("モデル") {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                Label("設定", systemImage: "gearshape").font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                Text("変更は自動的に保存されます").font(.callout).foregroundStyle(.secondary)
+            }
+            TabView {
+                generalSettings
+                    .tabItem { Label("一般", systemImage: "gearshape") }
+                PresetSettingsView(preferences: preferences)
+                    .tabItem { Label("プリセット", systemImage: "face.smiling") }
+                Form {
+                    fontSection("原文", family: $preferences.sourceFontFamily, size: $preferences.sourceFontSize,
+                                face: $preferences.sourceFontFace, color: $preferences.sourceTextColor, font: preferences.sourceFont)
+                    fontSection("訳文", family: $preferences.outputFontFamily, size: $preferences.outputFontSize,
+                                face: $preferences.outputFontFace, color: $preferences.outputTextColor, font: preferences.outputFont)
+                }.formStyle(.grouped).tabItem { Label("文字", systemImage: "textformat") }
+                glossarySettings
+                    .tabItem { Label("辞書", systemImage: "character.book.closed") }
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 700, idealWidth: 760, minHeight: 580, idealHeight: 680)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .preferredColorScheme(.light)
+    }
+
+    private var generalSettings: some View {
+        Form {
+            Section("モデル") {
+                if preferences.models.isEmpty {
+                    Label("モデルが登録されていません", systemImage: "square.stack.3d.up")
+                        .foregroundStyle(.secondary)
+                } else {
                     Picker("デフォルト", selection: $preferences.defaultModelID) {
                         Text("先頭のモデル").tag(nil as UUID?)
                         ForEach(preferences.models) { Text($0.tag).tag(Optional($0.id)) }
                     }.pickerStyle(.menu)
-                    ForEach($preferences.models) { $model in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 6) {
-                                TextField("タグ", text: $model.tag)
-                                TextField("ディレクトリ", text: $model.path).font(.caption)
-                            }
+                }
+                ForEach($preferences.models) { $model in
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline) {
+                            TextField("タグ", text: $model.tag)
+                                .help("翻訳画面に表示する名前。APIで指定する場合は一意のタグを使います。")
                             Button(role: .destructive) {
                                 if preferences.defaultModelID == model.id { preferences.defaultModelID = nil }
                                 preferences.models.removeAll { $0.id == model.id }
-                            } label: {
-                                Image(systemName: "minus.circle")
-                            }.buttonStyle(.borderless).help("モデルを一覧から削除")
+                            } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("モデル「\(model.tag)」を一覧から削除")
+                            .help("登録だけを削除します。モデルのファイルは削除しません。")
+                        }
+                        TextField("フォルダ", text: $model.path)
+                            .font(.system(.callout, design: .monospaced)).help(model.path)
+                        if model.tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Label("タグを入力してください", systemImage: "exclamationmark.circle")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else if preferences.models.filter({ $0.tag == model.tag }).count > 1 {
+                            Label("同じタグが複数あります。APIでタグを指定するには一意にしてください。", systemImage: "exclamationmark.circle")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    Button("モデルを追加…", action: preferences.addModel)
                 }
-                Section("実行環境") {
-                    TextField("Python", text: $preferences.python)
-                    Picker("自動解放", selection: $preferences.unloadSeconds) {
-                        Text("翻訳完了後すぐ").tag(0)
-                        Text("1分後").tag(60)
-                        Text("5分後").tag(300)
-                        Text("15分後").tag(900)
-                        Text("30分後").tag(1800)
-                        Text("アプリ終了時").tag(-1)
-                    }
+                Button("モデルを追加…", systemImage: "plus", action: preferences.addModel)
+                Text("ダウンロード済みのPLaMo 3 Translate MLXモデルのフォルダを選択します。翻訳を開始するまでモデルは読み込みません。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("モデルのメモリ管理") {
+                Picker("自動解放", selection: $preferences.unloadSeconds) {
+                    Text("翻訳完了後すぐ").tag(0)
+                    Text("1分後").tag(60)
+                    Text("5分後").tag(300)
+                    Text("15分後").tag(900)
+                    Text("30分後").tag(1800)
+                    Text("アプリ終了時").tag(-1)
                 }
-            }.formStyle(.grouped).tabItem { Label("一般", systemImage: "gearshape") }
-            PresetSettingsView(preferences: preferences)
-                .tabItem { Label("プリセット", systemImage: "face.smiling") }
-            Form {
-                fontSection("原文", family: $preferences.sourceFontFamily, size: $preferences.sourceFontSize,
-                            face: $preferences.sourceFontFace, color: $preferences.sourceTextColor, font: preferences.sourceFont)
-                fontSection("訳文", family: $preferences.outputFontFamily, size: $preferences.outputFontSize,
-                            face: $preferences.outputFontFace, color: $preferences.outputTextColor, font: preferences.outputFont)
-            }.formStyle(.grouped).tabItem { Label("文字", systemImage: "textformat") }
-            VStack(spacing: 12) {
-                HStack {
-                    Text("原語").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("訳語").frame(maxWidth: .infinity, alignment: .leading)
-                    Spacer().frame(width: 24)
-                }.foregroundStyle(.secondary)
-                ScrollView {
-                    LazyVStack {
+                Text("翻訳画面とローカルAPIで共通の設定です。解放後は、次の翻訳時に読み込み直します。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("実行環境") {
+                TextField("Python", text: $preferences.python)
+                    .font(.system(.callout, design: .monospaced)).help(preferences.python)
+                Text("推論に使用するPython実行ファイルの絶対パスです。通常は変更する必要はありません。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }.formStyle(.grouped)
+    }
+
+    private var glossarySettings: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("すべての翻訳で使う用語の対応を登録します。翻訳画面とAPIで共通です。")
+                .font(.callout).foregroundStyle(.secondary)
+            ScrollView {
+                if preferences.glossary.isEmpty {
+                    ContentUnavailableView("用語が登録されていません", systemImage: "character.book.closed",
+                                           description: Text("「用語を追加」から、原語と訳語を登録できます。"))
+                        .frame(maxWidth: .infinity).padding(.vertical, 40)
+                } else {
+                    LazyVStack(spacing: 12) {
                         ForEach($preferences.glossary) { $term in
-                            HStack {
-                                TextField("原語", text: $term.source)
-                                TextField("訳語", text: $term.target)
-                                Button { preferences.glossary.removeAll { $0.id == term.id } } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("原語").font(.caption).foregroundStyle(.secondary)
+                                    TextField("原語", text: $term.source).labelsHidden()
+                                }
+                                Image(systemName: "arrow.right").foregroundStyle(.secondary).accessibilityHidden(true)
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("訳語").font(.caption).foregroundStyle(.secondary)
+                                    TextField("訳語", text: $term.target).labelsHidden()
+                                }
+                                Button(role: .destructive) { preferences.glossary.removeAll { $0.id == term.id } } label: {
                                     Image(systemName: "minus.circle")
-                                }.buttonStyle(.borderless).help("用語を削除")
+                                }.buttonStyle(.borderless)
+                                    .help("用語を削除").accessibilityLabel("用語「\(term.source)」を削除")
                             }
+                            .padding(14).modifier(ReadingSurface(cornerRadius: 12))
                         }
-                    }
+                    }.padding(2)
                 }
-                HStack {
-                    Button("用語を追加", systemImage: "plus") { preferences.glossary.append(GlossaryTerm()) }
-                    Spacer()
-                }
-            }.padding(20).textFieldStyle(.roundedBorder)
-                .tabItem { Label("辞書", systemImage: "character.book.closed") }
+            }
+            HStack {
+                Button("用語を追加", systemImage: "plus") { preferences.glossary.append(GlossaryTerm()) }
+                Spacer()
+                Text("\(preferences.glossary.count)語").font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+            }
+            .padding(12).modifier(ControlSurface())
+            if preferences.glossary.contains(where: { $0.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                Label("原語と訳語を両方入力してください。不要な行は削除できます。", systemImage: "exclamationmark.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
-        .frame(width: 680, height: 540)
-        .preferredColorScheme(.light)
+        .padding(16).textFieldStyle(.roundedBorder)
     }
 
     private func fontSection(_ title: String, family: Binding<String>, size: Binding<Double>,
@@ -246,8 +308,14 @@ struct PreferencesView: View {
                 Button("リセット") { color.wrappedValue = nil }
                     .disabled(color.wrappedValue == nil)
             }
-            Text("あいうえお 漢字 ABC abc 123").font(Font(font))
-                .foregroundStyle(Color(nsColor: color.wrappedValue?.native ?? .textColor))
+            VStack(alignment: .leading, spacing: 8) {
+                Text("プレビュー").font(.caption).foregroundStyle(.secondary)
+                Text("あいうえお 漢字 ABC abc 123").font(Font(font))
+                    .foregroundStyle(Color(nsColor: color.wrappedValue?.native ?? .textColor))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                    .modifier(ReadingSurface(cornerRadius: 10))
+            }
         }
     }
 }

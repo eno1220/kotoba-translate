@@ -10,6 +10,28 @@ extension Bundle {
 struct ServerCheck {
     @MainActor
     static func main() async throws {
+        var draft = RequestDraft()
+        try require(draft.issue != nil, "request form rejects empty input")
+        draft.text = "hello"
+        try require(draft.issue == nil, "request form accepts defaults")
+        draft.maxTokens = "invalid"
+        try require(draft.issue != nil, "request form rejects nonnumeric token limit instead of reusing a stale value")
+        for limit in ["0", "32768"] {
+            draft.maxTokens = limit
+            try require(draft.issue != nil, "request form token limit boundary: \(limit)")
+        }
+        for limit in ["1", "32767"] {
+            draft.maxTokens = limit
+            try require(draft.issue == nil, "request form valid token limit: \(limit)")
+        }
+        for temperature in ["invalid", "nan", "inf", "-0.1", "2.1"] {
+            draft.temperature = temperature
+            try require(draft.issue != nil, "request form rejects invalid temperature: \(temperature)")
+        }
+        for temperature in ["0", "0.5", "2"] {
+            draft.temperature = temperature
+            try require(draft.issue == nil, "request form accepts temperature: \(temperature)")
+        }
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let directory = root.appendingPathComponent(".build/server-check")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

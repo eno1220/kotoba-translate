@@ -36,24 +36,33 @@ struct PresetSettingsView: View {
     var body: some View {
         Form {
             Section("自分のプリセット") {
+                if preferences.customPresets.isEmpty {
+                    Label("独自の場面や背景を登録できます", systemImage: "face.smiling")
+                        .foregroundStyle(.secondary)
+                }
                 ForEach($preferences.customPresets) { $preset in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            TextField("絵文字", text: $preset.emoji)
-                                .frame(width: 56).help("絵文字（⌃⌘スペース）")
-                                .onChange(of: preset.emoji) { _, value in
-                                    let emoji = value.filter { character in
-                                        character.unicodeScalars.contains { ($0.properties.isEmoji && $0.value > 0x7F) || $0.value == 0xFE0F || $0.value == 0x20E3 }
-                                    }
-                                    if value != String(emoji.prefix(1)) { preset.emoji = String(emoji.prefix(1)) }
-                                }
-                            TextField("名前", text: $preset.name)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("絵文字").font(.caption).foregroundStyle(.secondary)
+                                // Avoid rewriting marked text while an input method is composing.
+                                TextField("絵文字", text: $preset.emoji).labelsHidden()
+                                    .help("絵文字（⌃⌘スペース）。空欄の場合は✨を表示します。")
+                            }.frame(width: 80)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("名前").font(.caption).foregroundStyle(.secondary)
+                                TextField("名前", text: $preset.name).labelsHidden()
+                            }
                             Button(role: .destructive) { preferences.removePreset(preset.id) } label: {
                                 Image(systemName: "minus.circle")
-                            }.help("プリセットを削除")
+                            }.buttonStyle(.borderless).help("プリセットを削除")
+                                .accessibilityLabel("プリセット「\(preset.name)」を削除")
                         }
-                        TextEditor(text: $preset.contextDescription).font(.body).frame(minHeight: 80)
-                            .accessibilityLabel("プリセットの場面・背景")
+                        Text("場面・背景").font(.caption).foregroundStyle(.secondary)
+                        TextEditor(text: $preset.contextDescription).font(.body)
+                            .scrollContentBackground(.hidden).padding(8).frame(height: 100)
+                            .modifier(ReadingSurface(cornerRadius: 10))
+                            .accessibilityLabel("プリセット「\(preset.name)」の場面・背景")
                     }
                 }
                 Button("プリセットを追加", systemImage: "plus") { preferences.customPresets.append(ContextPreset()) }
@@ -61,6 +70,10 @@ struct PresetSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("アプリ別の自動適用") {
+                if preferences.appPresetRules.isEmpty {
+                    Label("自動適用するアプリが登録されていません", systemImage: "app.badge")
+                        .foregroundStyle(.secondary)
+                }
                 ForEach($preferences.appPresetRules) { $rule in
                     HStack {
                         Text(rule.name).help(rule.id).frame(maxWidth: .infinity, alignment: .leading)
@@ -68,9 +81,11 @@ struct PresetSettingsView: View {
                             Text("自動適用しない").tag(nil as String?)
                             ForEach(preferences.contextPresets) { Text($0.label).tag(Optional($0.id)) }
                         }.labelsHidden().frame(width: 210)
-                        Button { preferences.appPresetRules.removeAll { $0.id == rule.id } } label: {
+                            .accessibilityLabel("\(rule.name)のプリセット")
+                        Button(role: .destructive) { preferences.appPresetRules.removeAll { $0.id == rule.id } } label: {
                             Image(systemName: "minus.circle")
-                        }.help("アプリの設定を削除")
+                        }.buttonStyle(.borderless).help("アプリの設定を削除")
+                            .accessibilityLabel("\(rule.name)の自動適用設定を削除")
                     }
                 }
                 Button("アプリを追加…", systemImage: "plus", action: preferences.addPresetApp)

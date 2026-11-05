@@ -5,46 +5,98 @@ struct ServerView: View {
     @ObservedObject var server: LocalAPIServer
     @ObservedObject var preferences: Preferences
     @ObservedObject var translator: Translator
+    @State private var portText: String
+
+    init(server: LocalAPIServer, preferences: Preferences, translator: Translator) {
+        self.server = server
+        self.preferences = preferences
+        self.translator = translator
+        _portText = State(initialValue: String(server.port))
+    }
+
+    private var validPort: Bool {
+        Int(portText).map { (1024...65535).contains($0) } ?? false
+    }
+
+    private var connectionIssue: String? {
+        guard validPort else {
+            return "ポートは1024〜65535の整数で指定してください。"
+        }
+        guard server.apiKey.count >= 16, server.apiKey.utf8.allSatisfy({ (33...126).contains($0) }) else {
+            return "APIキーは空白を含まない半角16文字以上で指定してください。"
+        }
+        return nil
+    }
 
     var body: some View {
-        TabView {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("ローカルAPI", systemImage: "network").font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Text("このMacのアプリから翻訳に接続します。利用中はKotoba Translateを起動しておいてください。")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            TabView {
+                connectionSettings.tabItem { Label("接続", systemImage: "network") }
+                RequestBuilderView(server: server)
+                    .tabItem { Label("リクエストを試す", systemImage: "curlybraces") }
+            }
+        }
+        .padding(20)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 720, minHeight: 700)
+        .preferredColorScheme(.light)
+        .onChange(of: portText) { _, value in
+            if let port = Int(value), (1024...65535).contains(port) { server.port = port }
+        }
+        .onChange(of: server.port) { _, value in portText = String(value) }
+        .onChange(of: preferences.models, initial: true) { _, models in
+            if let id = server.modelID, !models.contains(where: { $0.id == id }) { server.modelID = nil }
+        }
+    }
+
+    private var connectionSettings: some View {
+        VStack(spacing: 16) {
             Form {
-                Section("ローカルAPI") {
-                    Text("このMacの他アプリやブラウザ拡張から、OpenAI互換APIで翻訳できます。アプリを起動したまま使用してください。")
-                        .foregroundStyle(.secondary)
-                    TextField("ポート", value: $server.port, format: .number.grouping(.never))
+                Section("接続設定") {
+                    TextField("ポート", text: $portText)
                         .disabled(server.running || server.starting)
+                        .help("1024〜65535。接続先は127.0.0.1に限定されます。")
                     SecureField("APIキー", text: $server.apiKey).disabled(server.running || server.starting)
                     HStack {
                         Button("APIキーをコピー") { copy(server.apiKey) }
+                            .disabled(server.apiKey.isEmpty)
                         Button("キーを再発行") { server.apiKey = UUID().uuidString + UUID().uuidString }
                             .disabled(server.running || server.starting)
+                            .help("再発行後は、接続するアプリのAPIキーも更新してください。")
                     }
+                    Text("接続設定は停止中に変更できます。キーを再発行した場合は、接続するアプリ側も更新してください。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let issue = connectionIssue {
+                        Label(issue, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+                Section("接続するアプリに設定する値") {
                     LabeledContent("Base URL") {
-                        Text(server.baseURL).textSelection(.enabled).font(.system(.body, design: .monospaced))
+                        Text(server.baseURL).textSelection(.enabled).font(.system(.callout, design: .monospaced))
                         Button("コピー") { copy(server.baseURL) }
+                            .accessibilityLabel("Base URLをコピー").disabled(!validPort)
                     }
-                    Text("接続先のBase URL・APIキーを設定し、モデルには plamo-translate を指定してください。モデル一覧APIのID、または登録した一意のタグも使えます。")
-                        .font(.callout).foregroundStyle(.secondary)
-                    HStack {
-                        if server.running {
-                            Text("受付中 · 完了 \(server.completed)件")
-                            Button("サーバーを停止", action: server.stop)
-                        } else if server.starting {
-                            ProgressView().controlSize(.small)
-                            Text("起動中")
-                            Button("中止", action: server.stop)
-                        } else {
-                            Text("停止中").foregroundStyle(.secondary)
-                            Button("サーバーを開始", action: server.start).buttonStyle(.borderedProminent)
-                        }
+                    LabeledContent("モデル名") {
+                        Text("plamo-translate").textSelection(.enabled).font(.system(.callout, design: .monospaced))
+                        Button("コピー") { copy("plamo-translate") }.accessibilityLabel("モデル名をコピー")
                     }
-                    if let error = server.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+                    Text("OpenAI互換APIに対応したアプリに、Base URL・APIキー・モデル名を入力します。登録した一意のタグや、モデル一覧APIのIDも指定できます。")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("翻訳の既定値") {
                     Picker("モデル", selection: $server.modelID) {
                         Text("設定のデフォルト").tag(nil as UUID?)
                         ForEach(preferences.models) { Text($0.tag).tag(Optional($0.id)) }
+                    }
+                    if preferences.models.isEmpty {
+                        Text("翻訳には、設定画面でモデルを登録してください。")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     languagePicker("原文", selection: $server.source, automatic: true)
                     languagePicker("訳文", selection: $server.target, automatic: false)
@@ -53,16 +105,23 @@ struct ServerView: View {
                             Text("指定なし").tag(""); Text("常体").tag("plain"); Text("敬体").tag("polite")
                         }
                     }
+                    Text("リクエストで言語・文体を省略した場合に使います。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("共有モデル") {
+                    HStack(spacing: 8) {
+                        if translator.busy || translator.loaded {
+                            Circle().fill(.green).frame(width: 7, height: 7).accessibilityHidden(true)
+                        }
+                        Text(translator.busy ? (translator.servingAPI ? "API: " : "翻訳画面: ") + translator.status : translator.loaded ? "読み込み済み" : "未読み込み")
+                        Spacer()
+                        if translator.busy && translator.servingAPI { Button("翻訳を中止", action: translator.cancel) }
+                        Button("解放", systemImage: "eject", action: translator.unload)
+                            .disabled(!translator.loaded || translator.busy).help("モデルをメモリから解放")
+                    }
                     Picker("自動解放", selection: $preferences.unloadSeconds) {
                         Text("完了後すぐ").tag(0); Text("1分後").tag(60); Text("5分後").tag(300)
                         Text("15分後").tag(900); Text("30分後").tag(1800); Text("アプリ終了時").tag(-1)
-                    }
-                    HStack {
-                        if translator.busy || translator.loaded { Circle().fill(.green).frame(width: 7, height: 7) }
-                        Text(translator.busy ? (translator.servingAPI ? "API: " : "翻訳画面: ") + translator.status : translator.loaded ? "モデル読み込み済み" : "モデル未読み込み")
-                        Spacer()
-                        if translator.busy && translator.servingAPI { Button("翻訳を中止", action: translator.cancel) }
-                        Button("モデルを解放", action: translator.unload).disabled(!translator.loaded || translator.busy)
                     }
                     if translator.busy, let startedAt = translator.startedAt {
                         TimelineView(.periodic(from: .now, by: 1)) { clock in
@@ -71,111 +130,199 @@ struct ServerView: View {
                         }
                     }
                     if let metrics = translator.metrics {
-                        Text("直近の翻訳: \(metrics.tokens ?? 0) tokens · \(String(format: "%.1f", metrics.tps ?? 0)) token/s" +
-                             (metrics.elapsed.map { String(format: " · %.2f秒", $0) } ?? ""))
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            Text("直近の翻訳")
+                            if let tokens = metrics.tokens { Text("\(tokens) tokens") }
+                            if let tps = metrics.tps { Text(String(format: "%.1f token/s", tps)) }
+                            if let elapsed = metrics.elapsed { Text(String(format: "%.2f秒", elapsed)) }
+                        }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
-                    Text("リクエスト時だけロードし、完了後の無通信時間で解放します。次のリクエストで再ロードします。通常の翻訳画面とモデルを共有し、実行中の追加リクエストには429を返します。")
-                        .font(.callout).foregroundStyle(.secondary)
+                    Text("翻訳画面とモデル・自動解放設定を共有します。翻訳中の追加リクエストには429を返します。モデルはリクエスト時に読み込みます。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }.formStyle(.grouped)
+            if let error = server.error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack(spacing: 12) {
+                if server.starting { ProgressView().controlSize(.small).accessibilityLabel("サーバーを起動中") }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(server.running ? "受付中" : server.starting ? "起動中" : "停止中").font(.headline)
+                    Text(server.running ? "完了 \(server.completed)件 · このMacからのみ接続できます" : "このMacからのみ接続できます")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if server.running || server.starting {
+                    Button(server.starting ? "中止" : "サーバーを停止", action: server.stop)
+                        .help("接続を閉じ、実行中のAPIリクエストも中止します。")
+                } else {
+                    Button("サーバーを開始", action: server.start).buttonStyle(.borderedProminent)
+                        .disabled(connectionIssue != nil)
                 }
             }
-            .formStyle(.grouped)
-            .tabItem { Label("接続", systemImage: "network") }
-            RequestBuilderView(server: server)
-                .tabItem { Label("リクエストJSON", systemImage: "curlybraces") }
+            .controlSize(.large).padding(14).modifier(ControlSurface())
+        }.padding(12)
+    }
+}
+
+struct RequestDraft: Equatable {
+    var text = ""
+    var context = ""
+    var source = ""
+    var target = "ja"
+    var form = ""
+    var useGlossary = true
+    var maxTokens = "2048"
+    var temperature = "0"
+    var stream = true
+
+    var issue: String? {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "原文を入力してください。" }
+        guard let limit = Int(maxTokens), (1..<32768).contains(limit) else {
+            return "最大生成トークン数は1〜32767の整数で指定してください。"
         }
-        .padding(12)
-        .frame(minWidth: 720, minHeight: 700)
-        .preferredColorScheme(.light)
+        guard let value = Double(temperature), value.isFinite, (0...2).contains(value) else {
+            return "Temperatureは0〜2の数値で指定してください。小数点には「.」を使います。"
+        }
+        return nil
     }
 }
 
 private struct RequestBuilderView: View {
     @ObservedObject var server: LocalAPIServer
-    @State private var text = ""
-    @State private var context = ""
-    @State private var source = ""
-    @State private var target = "ja"
-    @State private var form = ""
-    @State private var useGlossary = true
-    @State private var maxTokens = 2048
-    @State private var temperature = 0.0
-    @State private var stream = true
+    @State private var draft = RequestDraft()
+    @State private var generatedDraft: RequestDraft?
     @State private var json = ""
     @State private var response = ""
+    @State private var requestError: String?
     @State private var sending = false
     @State private var sendTask: Task<Void, Never>?
+    @FocusState private var jsonFocused: Bool
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("POST \(server.baseURL)/chat/completions").font(.system(.body, design: .monospaced)).textSelection(.enabled)
-                Text("Authorization: Bearer <APIキー> · Content-Type: application/json")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text("原文").font(.headline)
-                TextEditor(text: $text).frame(height: 90).border(.quaternary)
-                    .accessibilityLabel("JSONに含める原文")
-                HStack {
-                    languagePicker("原文", selection: $source, automatic: true)
-                    languagePicker("訳文", selection: $target, automatic: false)
-                    if target == "ja" {
-                        Picker("文体", selection: $form) {
+        VStack(spacing: 16) {
+            Form {
+                Section("1. 翻訳する内容") {
+                    Text("原文").font(.headline).accessibilityAddTraits(.isHeader)
+                    TextEditor(text: $draft.text).scrollContentBackground(.hidden)
+                        .padding(8).frame(height: 100).modifier(ReadingSurface(cornerRadius: 10))
+                        .accessibilityLabel("JSONに含める原文")
+                    languagePicker("原文の言語", selection: $draft.source, automatic: true)
+                    languagePicker("訳文の言語", selection: $draft.target, automatic: false)
+                    if draft.target == "ja" {
+                        Picker("文体", selection: $draft.form) {
                             Text("指定なし").tag(""); Text("常体").tag("plain"); Text("敬体").tag("polite")
                         }
                     }
-                }
-                Text("コンテキスト（任意）").font(.headline)
-                TextEditor(text: $context).frame(height: 60).border(.quaternary).accessibilityLabel("JSONのコンテキスト")
-                HStack {
-                    TextField("Max tokens", value: $maxTokens, format: .number.grouping(.never))
-                    TextField("Temperature", value: $temperature, format: .number)
-                    Toggle("辞書", isOn: $useGlossary)
-                    Toggle("ストリーミング", isOn: $stream)
-                }.textFieldStyle(.roundedBorder)
-                Text("userの本文を翻訳します。system/developerは翻訳の参考情報として扱い、会話や任意の指示実行には対応しません。言語・文体は専用フィールドで指定してください。省略時は「接続」タブの既定値を使います。")
-                    .font(.callout).foregroundStyle(.secondary)
-                HStack {
-                    Button("JSONを生成", action: generate)
-                    Button("JSONをコピー") { copy(json) }.disabled(json.isEmpty)
-                    Spacer()
-                    if sending {
-                        ProgressView().controlSize(.small)
-                        Button("中止") { sendTask?.cancel() }
-                    } else {
-                        Button("送信して試す", action: send).disabled(!server.running || json.isEmpty)
+                    Text("コンテキスト（任意）").font(.headline).accessibilityAddTraits(.isHeader)
+                    TextEditor(text: $draft.context).scrollContentBackground(.hidden)
+                        .padding(8).frame(height: 80).modifier(ReadingSurface(cornerRadius: 10))
+                        .accessibilityLabel("JSONに含めるコンテキスト")
+                }.disabled(sending)
+                Section("生成設定") {
+                    TextField("最大生成トークン数", text: $draft.maxTokens)
+                        .help("max_tokens: 1〜32767。入力と生成の合計は32768トークン以内。")
+                    TextField("Temperature", text: $draft.temperature).help("0〜2。小数点には「.」を使います。")
+                    Toggle("辞書を使用", isOn: $draft.useGlossary)
+                    Toggle("ストリーミング", isOn: $draft.stream)
+                    if let issue = draft.issue {
+                        Label(issue, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
                     }
-                    Button("消去") { text = ""; context = ""; json = ""; response = "" }.disabled(sending)
+                }.disabled(sending)
+                Section("2. 送信するJSON") {
+                    HStack {
+                        Button("JSONを生成", systemImage: "curlybraces", action: generate)
+                            .disabled(sending || draft.issue != nil)
+                        Button("JSONをコピー") { copy(json) }.disabled(json.isEmpty)
+                        Spacer()
+                    }
+                    if let generatedDraft, generatedDraft != draft {
+                        Label("フォームの変更は未反映です。「JSONを生成」で更新してください。", systemImage: "exclamationmark.circle")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    TextEditor(text: $json).font(.system(.body, design: .monospaced))
+                        .scrollContentBackground(.hidden).padding(8).frame(height: 200)
+                        .modifier(ReadingSurface(cornerRadius: 10)).accessibilityLabel("送信するJSON（編集可）")
+                        .focused($jsonFocused).disabled(sending)
+                    Text("送信時はこのJSONをそのまま使います。言語・文体を省略した場合は「接続」タブの既定値が使われます。APIキーは自動的にヘッダーへ付与し、JSONには含めません。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let requestError {
+                        Label(requestError, systemImage: "exclamationmark.triangle")
+                            .font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                    }
                 }
-                Text("送信するJSON（編集可）").font(.headline)
-                TextEditor(text: $json).font(.system(.body, design: .monospaced)).frame(height: 190)
-                    .border(.quaternary).accessibilityLabel("送信するJSON")
-                Text("フォームの変更は「JSONを生成」で反映します。APIキーはJSONに含めません。本文・JSON・応答は保存しません。")
-                    .font(.caption).foregroundStyle(.secondary)
                 if !response.isEmpty {
-                    Text("応答").font(.headline)
-                    TextEditor(text: .constant(response)).font(.system(.caption, design: .monospaced))
-                        .frame(height: 180).border(.quaternary).accessibilityLabel("APIの応答")
-                    Button("応答をコピー") { copy(response) }
+                    Section("3. 応答") {
+                        InputEditor(text: .constant(response), editable: false, font: .monospacedSystemFont(ofSize: 12, weight: .regular))
+                            .frame(height: 220).modifier(ReadingSurface(cornerRadius: 10))
+                            .accessibilityLabel("APIの応答（読み取り専用）")
+                        Button("応答をコピー") { copy(response) }
+                    }
                 }
-            }.padding(16)
+                Section {
+                    Text("テキスト翻訳専用です。userの本文を翻訳し、system/developerは参考情報として扱います。本文・JSON・応答は保存しません。この画面を離れると送信を中止します。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }.formStyle(.grouped)
+            HStack(spacing: 12) {
+                Button("消去") {
+                    draft.text = ""; draft.context = ""; json = ""; response = ""
+                    generatedDraft = nil; requestError = nil
+                }.disabled(sending || (draft.text.isEmpty && draft.context.isEmpty && json.isEmpty && response.isEmpty))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(sending ? "送信中" : server.running ? "送信先" : "サーバーが停止しています")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(server.running ? "POST \(server.baseURL)/chat/completions" : "「接続」タブでサーバーを開始してください。")
+                        .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                }
+                Spacer(minLength: 0)
+                if sending {
+                    ProgressView().controlSize(.small).accessibilityLabel("APIの応答を待機中")
+                    Button("中止") { sendTask?.cancel() }
+                } else {
+                    Button("送信して試す", systemImage: "paperplane", action: send)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!server.running || json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .controlSize(.large).padding(14).modifier(ControlSurface())
         }
+        .padding(12)
+        .onChange(of: json) { _, _ in requestError = nil }
         .onDisappear { sendTask?.cancel() }
     }
 
     private func generate() {
+        guard draft.issue == nil, let maxTokens = Int(draft.maxTokens), let temperature = Double(draft.temperature) else { return }
         let value: [String: Any] = [
-            "model": "plamo-translate", "messages": [["role": "user", "content": text]],
-            "source_lang": source, "target_lang": target, "form": target == "ja" ? form : "",
-            "context": context, "use_glossary": useGlossary,
-            "max_tokens": maxTokens, "temperature": temperature, "stream": stream
+            "model": "plamo-translate", "messages": [["role": "user", "content": draft.text]],
+            "source_lang": draft.source, "target_lang": draft.target, "form": draft.target == "ja" ? draft.form : "",
+            "context": draft.context, "use_glossary": draft.useGlossary,
+            "max_tokens": maxTokens, "temperature": temperature, "stream": draft.stream
         ]
         do {
             let data = try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
             json = String(decoding: data, as: UTF8.self)
-        } catch { response = error.localizedDescription }
+            generatedDraft = draft
+            requestError = nil
+        } catch { requestError = error.localizedDescription }
     }
 
     private func send() {
+        guard server.running, !sending else { return }
+        do {
+            guard try JSONSerialization.jsonObject(with: Data(json.utf8)) is [String: Any] else {
+                requestError = "JSONの最上位にはオブジェクト（{ … }）を指定してください。"
+                jsonFocused = true
+                return
+            }
+        } catch {
+            requestError = "JSONの構文を確認してください。" + error.localizedDescription
+            jsonFocused = true
+            return
+        }
+        requestError = nil
         guard let url = URL(string: server.baseURL + "/chat/completions") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
