@@ -95,8 +95,7 @@ def main():
                 raise ValueError(f"入力 {len(tokens)} + Max tokens {max_tokens} が32768を超えています。原文・Context・辞書を短くしてください。")
             emit("prefill", current=0, total=len(tokens), load_seconds=load_seconds)
             last = None
-            output = ""
-            sent_length = 0
+            pending = []
             last_emit = 0.0
             def progress(current, total):
                 emit("prefill", current=current, total=total)
@@ -107,15 +106,16 @@ def main():
                 prompt_progress_callback=progress,
             )) as stream:
                 for last in stream:
-                    output += last.text
+                    pending.append(last.text)
                     now = time.perf_counter()
                     if now - last_emit >= 0.05:
-                        emit("delta", text=output[sent_length:], tokens=last.generation_tokens,
+                        emit("delta", text="".join(pending), tokens=last.generation_tokens,
                              tps=last.generation_tps)
-                        sent_length = len(output)
+                        pending.clear()
                         last_emit = now
-            if len(output) > sent_length:
-                emit("delta", text=output[sent_length:])
+            remaining = "".join(pending)
+            if remaining:
+                emit("delta", text=remaining)
             emit("done", elapsed=time.perf_counter() - started,
                  load_seconds=load_seconds, prompt_tokens=len(tokens),
                  tokens=last.generation_tokens if last else 0,

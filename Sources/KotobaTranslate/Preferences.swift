@@ -28,19 +28,25 @@ struct EditorColor: Codable, Equatable {
 
 @MainActor
 final class Preferences: ObservableObject {
-    @Published var models: [ModelLocation] { didSet { save() } }
-    @Published var defaultModelID: UUID? { didSet { save() } }
-    @Published var glossary: [GlossaryTerm] { didSet { save() } }
-    @Published var python: String { didSet { save() } }
-    @Published var unloadSeconds: Int { didSet { save() } }
-    @Published var sourceFontFamily: String { didSet { sourceFontFace = ""; save() } }
-    @Published var sourceFontSize: Double { didSet { save() } }
-    @Published var outputFontFamily: String { didSet { outputFontFace = ""; save() } }
-    @Published var outputFontSize: Double { didSet { save() } }
-    @Published var sourceFontFace: String { didSet { save() } }
-    @Published var outputFontFace: String { didSet { save() } }
-    @Published var sourceTextColor: EditorColor? { didSet { save() } }
-    @Published var outputTextColor: EditorColor? { didSet { save() } }
+    @Published var models: [ModelLocation] { didSet { saveEncoded(models, forKey: "models") } }
+    @Published var defaultModelID: UUID? { didSet { UserDefaults.standard.set(defaultModelID?.uuidString, forKey: "defaultModelID") } }
+    @Published var glossary: [GlossaryTerm] { didSet { saveEncoded(glossary, forKey: "glossary") } }
+    @Published var python: String { didSet { UserDefaults.standard.set(python, forKey: "python") } }
+    @Published var unloadSeconds: Int { didSet { UserDefaults.standard.set(unloadSeconds, forKey: "unloadSeconds") } }
+    @Published var sourceFontFamily: String { didSet {
+        sourceFontFace = ""
+        UserDefaults.standard.set(sourceFontFamily, forKey: "sourceFontFamily")
+    } }
+    @Published var sourceFontSize: Double { didSet { UserDefaults.standard.set(sourceFontSize, forKey: "sourceFontSize") } }
+    @Published var outputFontFamily: String { didSet {
+        outputFontFace = ""
+        UserDefaults.standard.set(outputFontFamily, forKey: "outputFontFamily")
+    } }
+    @Published var outputFontSize: Double { didSet { UserDefaults.standard.set(outputFontSize, forKey: "outputFontSize") } }
+    @Published var sourceFontFace: String { didSet { UserDefaults.standard.set(sourceFontFace, forKey: "sourceFontFace") } }
+    @Published var outputFontFace: String { didSet { UserDefaults.standard.set(outputFontFace, forKey: "outputFontFace") } }
+    @Published var sourceTextColor: EditorColor? { didSet { saveEncoded(sourceTextColor, forKey: "sourceTextColor") } }
+    @Published var outputTextColor: EditorColor? { didSet { saveEncoded(outputTextColor, forKey: "outputTextColor") } }
 
     var preferredModelID: UUID? {
         models.first(where: { $0.id == defaultModelID })?.id ?? models.first?.id
@@ -76,21 +82,8 @@ final class Preferences: ObservableObject {
         if !models.contains(where: { $0.id == defaultModelID }) { defaultModelID = nil }
     }
 
-    private func save() {
-        let defaults = UserDefaults.standard
-        defaults.set(try? JSONEncoder().encode(models), forKey: "models")
-        defaults.set(defaultModelID?.uuidString, forKey: "defaultModelID")
-        defaults.set(try? JSONEncoder().encode(glossary), forKey: "glossary")
-        defaults.set(python, forKey: "python")
-        defaults.set(unloadSeconds, forKey: "unloadSeconds")
-        defaults.set(sourceFontFamily, forKey: "sourceFontFamily")
-        defaults.set(sourceFontSize, forKey: "sourceFontSize")
-        defaults.set(outputFontFamily, forKey: "outputFontFamily")
-        defaults.set(outputFontSize, forKey: "outputFontSize")
-        defaults.set(sourceFontFace, forKey: "sourceFontFace")
-        defaults.set(outputFontFace, forKey: "outputFontFace")
-        defaults.set(sourceTextColor.flatMap { try? JSONEncoder().encode($0) }, forKey: "sourceTextColor")
-        defaults.set(outputTextColor.flatMap { try? JSONEncoder().encode($0) }, forKey: "outputTextColor")
+    private func saveEncoded<T: Encodable>(_ value: T?, forKey key: String) {
+        UserDefaults.standard.set(value.flatMap { try? JSONEncoder().encode($0) }, forKey: key)
     }
 
     func addModel() {

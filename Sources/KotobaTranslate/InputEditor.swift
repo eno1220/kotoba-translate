@@ -48,13 +48,29 @@ struct InputEditor: NSViewRepresentable {
         editor.focusRequest = focusRequest
         if editor.string != text && !editor.hasMarkedText() {
             let selection = editor.selectedRange()
-            editor.string = text
-            editor.setSelectedRange(NSRange(location: min(selection.location, (text as NSString).length), length: 0))
+            let replacement = text as NSString
+            let oldLength = (editor.string as NSString).length
+            // Streaming output normally appends. Preserve the existing text storage
+            // and its layout instead of replacing the entire translation each time.
+            if !editable, replacement.length >= oldLength,
+               replacement.compare(editor.string, options: .literal,
+                                   range: NSRange(location: 0, length: oldLength)) == .orderedSame,
+               let storage = editor.textStorage {
+                storage.replaceCharacters(in: NSRange(location: oldLength, length: 0),
+                                          with: replacement.substring(from: oldLength))
+            } else {
+                editor.string = text
+            }
+            editor.setSelectedRange(NSRange(location: min(selection.location, replacement.length), length: 0))
         }
         if editor.font != font { editor.font = font }
         if editor.textColor != textColor { editor.textColor = textColor }
-        editor.typingAttributes[.font] = font
-        editor.typingAttributes[.foregroundColor] = textColor
+        if editor.typingAttributes[.font] as? NSFont != font {
+            editor.typingAttributes[.font] = font
+        }
+        if editor.typingAttributes[.foregroundColor] as? NSColor != textColor {
+            editor.typingAttributes[.foregroundColor] = textColor
+        }
         if focusRequest != nil {
             DispatchQueue.main.async { [weak editor] in editor?.focusIfRequested() }
         }

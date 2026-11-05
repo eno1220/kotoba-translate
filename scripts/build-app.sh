@@ -15,9 +15,13 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
 cp "$bin_dir/KotobaTranslate" "$app/Contents/MacOS/"
+# Keep the original build artifact for debugging; strip only the packaged copy.
+xcrun strip -S -x "$app/Contents/MacOS/KotobaTranslate"
 for resource in "$bin_dir"/*.bundle(N); do
     cp -R "$resource" "$app/Contents/Resources/"
 done
+# Python bytecode caches are generated locally and are not app resources.
+find "$app/Contents/Resources" -type d -name __pycache__ -prune -exec rm -rf {} +
 printf '%s\n' "$PWD/.venv/bin/python" > "$app/Contents/Resources/python-path.txt"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
