@@ -1,6 +1,15 @@
 {
-  "originHash" : "5ad7afc10c87be95d7f054e10d38fe3459e9fdf7d033193693e57bb648254947",
+  "originHash" : "9093e79ef36f88a20db336055a4ba0bc5519566dff74e8c385d6bb2272074d10",
   "pins" : [
+    {
+      "identity" : "htmltomarkdown",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jaywcjlove/HTMLToMarkdown",
+      "state" : {
+        "revision" : "fbd8239cec2434054794bad6ff695a08bb4d76d6",
+        "version" : "1.0.0"
+      }
+    },
     {
       "identity" : "networkimage",
       "kind" : "remoteSourceControl",
@@ -26,6 +35,24 @@
       "state" : {
         "revision" : "5f613358148239d0292c0cef674a3c2314737f9e",
         "version" : "2.4.1"
+      }
+    },
+    {
+      "identity" : "swiftreadability",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/RusticPotatos/SwiftReadability",
+      "state" : {
+        "revision" : "604550eb6148d3e5ac7d9b34c83ec837d8930fae",
+        "version" : "0.1.8"
+      }
+    },
+    {
+      "identity" : "swiftsoup",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/scinfu/SwiftSoup",
+      "state" : {
+        "revision" : "e7f85f4d3dd91ca9a1e94d3328aa1ed5120a8c0f",
+        "version" : "2.14.3"
       }
     }
   ],

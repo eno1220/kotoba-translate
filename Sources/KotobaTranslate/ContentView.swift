@@ -40,6 +40,9 @@ struct ContentView: View {
         .alert("翻訳エラー", isPresented: Binding(get: { translator.error != nil }, set: { if !$0 { translator.error = nil } })) {
             Button("OK") { translator.error = nil }
         } message: { Text(translator.error ?? "") }
+        .alert("記事の取得エラー", isPresented: Binding(get: { translator.articleError != nil }, set: { if !$0 { translator.articleError = nil } })) {
+            Button("OK") { translator.articleError = nil }
+        } message: { Text(translator.articleError ?? "") }
     }
 
     private var sourcePane: some View {
@@ -60,6 +63,8 @@ struct ContentView: View {
             .buttonStyle(.borderless)
             .padding(.horizontal, 14).frame(height: 54)
             Divider()
+            articleURLBar
+            Divider()
             if translator.sourcePreview {
                 markdownPreview(translator.input, font: preferences.sourceFont,
                                 color: preferences.sourceColor)
@@ -76,6 +81,25 @@ struct ContentView: View {
             .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             .padding(.horizontal, 18).frame(height: 34)
         }.frame(minWidth: 340)
+    }
+
+    private var articleURLBar: some View {
+        HStack(spacing: 8) {
+            TextField("記事のURL", text: $translator.articleURL)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("記事のURL")
+                .onSubmit { translator.fetchArticle() }
+                .disabled(translator.fetchingArticle || translator.busy)
+            if translator.fetchingArticle {
+                ProgressView().controlSize(.small).accessibilityLabel("記事を取得中")
+                Button("中止", action: translator.cancelArticleFetch)
+            } else {
+                Button("取得", action: translator.fetchArticle)
+                    .disabled(translator.articleURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || translator.busy)
+                    .help("記事本文をMarkdownに変換し、原文を置き換えます")
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
     }
 
     private var outputPane: some View {

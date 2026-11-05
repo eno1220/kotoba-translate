@@ -42,6 +42,8 @@ Python環境はリポジトリ内の`.venv`を参照するため、このディ�
 
 ## 操作
 
+- 原文欄の上の「記事のURL」にHTTPSのURLを入力し、「取得」（またはURL欄でEnter）を押すと、SwiftReadabilityで記事本文を抽出し、HTMLToMarkdownでMarkdownへ変換して原文欄を置き換えます。取得だけでは翻訳・モデル読み込みを開始しません。内容を確認・編集してから「翻訳」を押してください。取得中は「中止」で取り消せます。原文を編集した場合も取得を取り消し、編集内容を保持します。失敗時は元の原文を残します。
+- 記事取得はHTMLページ（上限5MB）に対応します。ログインやJavaScriptによる本文の表示が必要なページには対応しません。URL・取得した本文は保存せず、通信のディスクキャッシュも使用しません。
 - 原文・訳文の言語を選択。原文は自動検出も可能。公式の53言語に対応。
 - Enterで翻訳、Shift+Enterで改行、⌘Enterでも翻訳。IME変換中のEnterは変換確定。
 - 日本語への翻訳では「指定なし」「常体」「敬体」を選択。
@@ -66,6 +68,14 @@ Swift Packageとして構築し、MarkdownプレビューにMarkdownUIを使用�
 
 依存バージョンは公式MLXモデルの`plamo_mlx_runtime`に合わせています。モデルを用いた実推論にはダウンロード済みのモデル一式が必要です。
 
+記事取得の検証（XCTest・モデル・Pythonは不要）:
+
+```sh
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk zsh scripts/check-article.sh
+```
+
+引数にHTTPSの記事URLを渡すと、実際の取得からMarkdown変換まで追加で確認します。URL検証、本文抽出、見出し・強調・相対リンク、日本語文字コード、空本文のエラーを検証します。
+
 仕様の参照元:
 
 - [公式MLXモデル・仕様とオプション](https://huggingface.co/pfnet/plamo-3-translate-0.8b-MLX-4bit)
@@ -73,3 +83,5 @@ Swift Packageとして構築し、MarkdownプレビューにMarkdownUIを使用�
 - [公式実行環境情報](https://huggingface.co/pfnet/plamo-3-translate-0.8b-MLX-4bit/blob/main/config.json)
 - [mlx-lm](https://github.com/ml-explore/mlx-lm)
 - [swift-markdown-ui](https://github.com/gonzalezreal/swift-markdown-ui)
+- [SwiftReadability](https://github.com/RusticPotatos/SwiftReadability)
+- [HTMLToMarkdown](https://github.com/jaywcjlove/HTMLToMarkdown)

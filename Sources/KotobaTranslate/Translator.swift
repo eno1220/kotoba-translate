@@ -20,7 +20,15 @@ struct WorkerEvent: Decodable {
 
 @MainActor
 final class Translator: ObservableObject {
-    @Published var input = "" { didSet { updateInputStatistics() } }
+    @Published var input = "" { didSet {
+        if fetchingArticle { cancelArticleFetch() }
+        updateInputStatistics()
+    } }
+    @Published var articleURL = ""
+    @Published private(set) var fetchingArticle = false
+    @Published var articleError: String?
+    private var articleTask: Task<Void, Never>?
+    private var articleRevision = UUID()
     @Published private(set) var inputStatistics = InputStatistics()
     @Published var sourcePreview = false
     @Published var outputPreview = false
@@ -61,13 +69,55 @@ final class Translator: ObservableObject {
             Task { @MainActor in self?.scheduleUnload(seconds: seconds) }
         }
         quitSubscription = NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
-            .sink { [weak self] _ in self?.stopProcess() }
+            .sink { [weak self] _ in
+                self?.cancelArticleFetch()
+                self?.stopProcess()
+            }
     }
 
     var canTranslate: Bool {
-        !busy && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !busy && !fetchingArticle && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         preferences.models.contains { $0.id == modelID } && maxTokens > 0 && maxTokens < 32768 &&
         temperature.isFinite && (0...2).contains(temperature)
+    }
+
+    func fetchArticle() {
+        guard !fetchingArticle, !busy else { return }
+        let url: URL
+        do { url = try ArticleFetcher.url(from: articleURL) }
+        catch { articleError = error.localizedDescription; return }
+        articleError = nil
+        fetchingArticle = true
+        let revision = UUID()
+        articleRevision = revision
+        articleTask = Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                let markdown = try await ArticleFetcher.fetch(url)
+                try Task.checkCancellation()
+                await self?.finishArticleFetch(markdown: markdown, error: nil, revision: revision)
+            } catch {
+                guard !Task.isCancelled else { return }
+                await self?.finishArticleFetch(markdown: nil, error: error.localizedDescription, revision: revision)
+            }
+        }
+    }
+
+    func cancelArticleFetch() {
+        articleRevision = UUID()
+        articleTask?.cancel()
+        articleTask = nil
+        fetchingArticle = false
+    }
+
+    private func finishArticleFetch(markdown: String?, error: String?, revision: UUID) {
+        guard revision == articleRevision else { return }
+        articleTask = nil
+        fetchingArticle = false
+        articleError = error
+        if let markdown {
+            sourcePreview = false
+            input = markdown
+        }
     }
 
     private func updateInputStatistics() {
