@@ -182,13 +182,11 @@ struct PreferencesView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        HSplitView {
             List(SettingsSection.allCases, selection: $selection) { section in
                 SettingsNavigationLabel(title: section.title, symbol: section.symbol).tag(section)
             }
             .listStyle(.sidebar)
-            .navigationTitle("設定")
-            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
             .safeAreaInset(edge: .bottom) {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.seal").font(.system(size: 10))
@@ -197,7 +195,7 @@ struct PreferencesView: View {
                 }
                 .foregroundStyle(.secondary).padding(18)
             }
-        } detail: {
+            .frame(minWidth: 200, idealWidth: 220, maxWidth: 260, maxHeight: .infinity)
             VStack(spacing: 0) {
                 let section = selection ?? .general
                 switch section {
@@ -214,9 +212,10 @@ struct PreferencesView: View {
                 }
             }
             .background { ScreenBackground() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 900, idealWidth: 1000, minHeight: 640, idealHeight: 760)
-        .background(CompactWindowToolbar())
+        .background(MinimalWindowTitlebar())
         .preferredColorScheme(.light)
     }
 

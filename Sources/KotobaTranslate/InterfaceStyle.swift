@@ -35,18 +35,26 @@ struct ScreenBackground: View {
     }
 }
 
-/// Settings scenes don't consistently apply the scene's toolbar style.
-struct CompactWindowToolbar: NSViewRepresentable {
+/// Keep only the native window controls above the persistent settings sidebar.
+struct MinimalWindowTitlebar: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { Anchor() }
 
     func updateNSView(_ view: NSView, context: Context) {
-        DispatchQueue.main.async { view.window?.toolbarStyle = .unifiedCompact }
+        DispatchQueue.main.async { (view as? Anchor)?.configureWindow() }
     }
 
     private final class Anchor: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            window?.toolbarStyle = .unifiedCompact
+            configureWindow()
+        }
+
+        func configureWindow() {
+            guard let window else { return }
+            window.toolbar = nil
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
         }
     }
 }
@@ -159,28 +167,46 @@ struct SettingsPage<Content: View>: View {
         }
         .font(.system(size: 14))
         .controlSize(.regular)
-        .textFieldStyle(OutlineTextFieldStyle())
+        .textFieldStyle(SettingsTextFieldStyle())
         .toggleStyle(.switch)
         .background(Color.clear)
     }
 }
 
-/// A thin, near-white single-line field without the stock bezel shadow.
-struct OutlineTextFieldStyle: TextFieldStyle {
+/// One subtle rounded bezel around the system editor, without a nested square bezel.
+struct SettingsTextFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
-        configuration
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color(nsColor: .textBackgroundColor))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(KotobaTheme.border, lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        Field(content: configuration)
+    }
+
+    private struct Field<Content: View>: View {
+        var content: Content
+        @FocusState private var focused: Bool
+        @Environment(\.isEnabled) private var enabled
+        @Environment(\.colorSchemeContrast) private var contrast
+
+        var body: some View {
+            content
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color(nsColor: .textBackgroundColor).opacity(enabled ? 1 : 0.5),
+                            in: RoundedRectangle(cornerRadius: 5))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 5)
+                        .strokeBorder(contrast == .increased ? KotobaTheme.strongBorder : Color.primary.opacity(0.18))
+                        .allowsHitTesting(false)
+                }
+                .overlay {
+                    if focused {
+                        RoundedRectangle(cornerRadius: 7)
+                            .strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 3)
+                            .padding(-3)
+                            .allowsHitTesting(false)
+                    }
+                }
+        }
     }
 }
 
@@ -216,7 +242,7 @@ struct SelectOption<Value: Hashable>: Identifiable {
     var id: Value { value }
 }
 
-/// A thin-outlined menu that replaces the stock pop-up button chrome.
+/// System pop-up control, sharing sizing across settings and translation options.
 struct SelectField<Value: Hashable>: View {
     var title: String
     @Binding var selection: Value
@@ -226,64 +252,27 @@ struct SelectField<Value: Hashable>: View {
     var large = false
     var compact = false
 
-    @State private var hovering = false
-
-    private var currentLabel: String {
-        options.first { $0.value == selection }?.label ?? placeholder
-    }
-
     private var height: CGFloat {
         if compact { return 24 }
         return large ? 30 : 26
     }
 
     var body: some View {
-        Menu {
-            ForEach(options) { option in
-                Button {
-                    selection = option.value
-                } label: {
-                    if option.value == selection {
-                        Label(option.label, systemImage: "checkmark")
-                    } else {
-                        Text(option.label)
-                    }
-                }
+        Picker(title, selection: $selection) {
+            if options.isEmpty {
+                Text(placeholder).tag(selection)
             }
-        } label: {
-            Text(currentLabel)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            ForEach(options) { option in
+                Text(option.label).tag(option.value)
+            }
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .controlSize(compact ? .small : large ? .large : .regular)
         .font(.system(size: compact ? 11.5 : large ? 14.5 : 13,
                       weight: large ? .medium : .regular))
-        .foregroundStyle(.primary)
-        .padding(.leading, compact ? 7 : large ? 10 : 9)
-        .padding(.trailing, compact ? 24 : large ? 28 : 26)
         .frame(width: width, alignment: .leading)
         .frame(minHeight: height)
-        .background {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(hovering ? KotobaTheme.grouped : Color(nsColor: .textBackgroundColor))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(hovering ? Color.primary.opacity(0.22) : KotobaTheme.border,
-                              lineWidth: 1)
-                .allowsHitTesting(false)
-        }
-        .overlay(alignment: .trailing) {
-            Image(systemName: "chevron.down")
-                .font(.system(size: large ? 9.5 : 9, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.trailing, compact ? 8 : large ? 10 : 9)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .onHover { hovering = $0 }
         .accessibilityLabel(title)
     }
 }

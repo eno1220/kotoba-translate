@@ -235,7 +235,7 @@ struct ContentView: View {
     private var articleURLBar: some View {
         HStack(spacing: 8) {
             TextField("記事のURL", text: $translator.articleURL)
-                .textFieldStyle(OutlineTextFieldStyle())
+                .textFieldStyle(SettingsTextFieldStyle())
                 .accessibilityLabel("記事のURL")
                 .focused($articleURLFocused)
                 .onSubmit { translator.fetchArticle() }
@@ -327,7 +327,7 @@ struct ContentView: View {
                 TextField("終了ページ", text: $pdfEndPage)
                     .accessibilityLabel("終了ページ")
             }
-            .textFieldStyle(OutlineTextFieldStyle())
+            .textFieldStyle(SettingsTextFieldStyle())
             .disabled(pdfAllPages)
             Text("ページ番号は先頭を1として指定します。取り込むと原文を置き換えます。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -448,7 +448,7 @@ struct ContentView: View {
                                      help: "登録した用語を翻訳に反映します。")
                     }
                     .font(.system(size: 13))
-                    .textFieldStyle(OutlineTextFieldStyle())
+                    .textFieldStyle(SettingsTextFieldStyle())
                 }
                 .padding(16)
             }

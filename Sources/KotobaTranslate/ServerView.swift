@@ -45,13 +45,11 @@ struct ServerView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        HSplitView {
             List(ServerPage.allCases, selection: $selection) { page in
                 SettingsNavigationLabel(title: page.title, symbol: page.symbol).tag(page)
             }
             .listStyle(.sidebar)
-            .navigationTitle("ローカルAPI")
-            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
             .safeAreaInset(edge: .bottom) {
                 HStack {
                     StatusBadge(text: serverStatusText,
@@ -60,7 +58,7 @@ struct ServerView: View {
                 }
                 .padding(18)
             }
-        } detail: {
+            .frame(minWidth: 200, idealWidth: 220, maxWidth: 260, maxHeight: .infinity)
             VStack(spacing: 0) {
                 ZStack {
                     // Keep the draft when navigating, and cancel its request when leaving it.
@@ -73,9 +71,10 @@ struct ServerView: View {
                 }
             }
             .background { ScreenBackground() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 940, minHeight: 700)
-        .background(CompactWindowToolbar())
+        .background(MinimalWindowTitlebar())
         .preferredColorScheme(.light)
         .onChange(of: portText) { _, value in
             if let port = Int(value), (1024...65535).contains(port) { server.port = port }

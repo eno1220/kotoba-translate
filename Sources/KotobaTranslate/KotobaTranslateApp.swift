@@ -42,9 +42,7 @@ struct KotobaTranslateApp: App {
             ServerView(server: server, preferences: preferences, translator: translator)
         }
         .defaultSize(width: 1040, height: 820)
-        .windowToolbarStyle(.unifiedCompact)
         Settings { PreferencesView(preferences: preferences) }
-            .windowToolbarStyle(.unifiedCompact)
         MenuBarExtra {
             ServerStatusMenu(server: server)
         } label: {
