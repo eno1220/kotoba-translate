@@ -187,13 +187,15 @@ struct PreferencesView: View {
                 SettingsNavigationLabel(title: section.title, symbol: section.symbol).tag(section)
             }
             .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .background(Color(nsColor: .textBackgroundColor))
             .navigationTitle("設定")
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
             .safeAreaInset(edge: .bottom) {
-                Text("変更は自動的に保存されます")
-                    .font(.caption).foregroundStyle(.secondary).padding(20)
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.seal").font(.system(size: 10))
+                        .accessibilityHidden(true)
+                    Text("変更は自動的に保存されます").font(.system(size: 11))
+                }
+                .foregroundStyle(.secondary).padding(18)
             }
         } detail: {
             VStack(spacing: 0) {
@@ -210,7 +212,7 @@ struct PreferencesView: View {
                     glossarySettings
                 }
             }
-            .background(Color(nsColor: .textBackgroundColor))
+            .background { ScreenBackground() }
         }
         .frame(minWidth: 900, idealWidth: 1000, minHeight: 640, idealHeight: 760)
         .background(CompactWindowToolbar())
@@ -219,13 +221,13 @@ struct PreferencesView: View {
 
     private var generalSettings: some View {
         SettingsPage {
-            SettingsCard(title: "モデル") {
+            SettingsCard(title: "モデル", symbol: "square.stack.3d.up") {
                 HStack(spacing: 14) {
-                    SettingsIcon(symbol: "cpu", size: 36)
+                    SettingsIcon(symbol: "cpu", size: 40)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("PLaMo 3 Translate").font(.headline)
+                        Text("PLaMo 3 Translate").font(.system(size: 15, weight: .semibold))
                         Text("ダウンロード済みのMLXモデルを登録します。")
-                            .font(.callout).foregroundStyle(.secondary)
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("モデルを追加…", systemImage: "plus", action: preferences.addModel)
@@ -240,57 +242,59 @@ struct PreferencesView: View {
                         }.pickerStyle(.menu).frame(maxWidth: 260)
                     }
                 }
-                Text("翻訳を開始するまでモデルは読み込みません。")
-                    .font(.callout).foregroundStyle(.secondary)
+                SettingsFootnote(text: "翻訳を開始するまでモデルは読み込みません。", symbol: "info.circle")
             }
-            ForEach($preferences.models) { $model in
-                SettingsCard(title: "") {
-                    SettingsRow("タグ") {
-                        TextField("タグ", text: $model.tag).frame(maxWidth: 300)
-                            .help("翻訳画面に表示する名前。APIで指定する場合は一意のタグを使います。")
-                        Button(role: .destructive) {
-                            if preferences.defaultModelID == model.id { preferences.defaultModelID = nil }
-                            preferences.models.removeAll { $0.id == model.id }
-                        } label: { Image(systemName: "trash") }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("モデル「\(model.tag)」を一覧から削除")
-                        .help("登録だけを削除します。モデルのファイルは削除しません。")
-                    }
-                    Divider()
-                    SettingsRow("フォルダ") {
-                        TextField("フォルダ", text: $model.path)
-                            .font(.system(.callout, design: .monospaced)).help(model.path)
-                    }
-                    if model.tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Label("タグを入力してください", systemImage: "exclamationmark.circle")
-                            .font(.callout).foregroundStyle(.secondary)
-                    } else if preferences.models.filter({ $0.tag == model.tag }).count > 1 {
-                        Label("APIでタグを指定するには、一意のタグを付けてください。", systemImage: "exclamationmark.circle")
-                            .font(.callout).foregroundStyle(.secondary)
+            if !preferences.models.isEmpty {
+                SettingsCard(title: "登録済みのモデル（\(preferences.models.count)）", symbol: "shippingbox") {
+                    ForEach($preferences.models) { $model in
+                        VStack(alignment: .leading, spacing: 10) {
+                            SettingsRow("タグ") {
+                                TextField("タグ", text: $model.tag)
+                                    .help("翻訳画面に表示する名前。APIで指定する場合は一意のタグを使います。")
+                                Button(role: .destructive) {
+                                    if preferences.defaultModelID == model.id { preferences.defaultModelID = nil }
+                                    preferences.models.removeAll { $0.id == model.id }
+                                } label: { Image(systemName: "trash") }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel("モデル「\(model.tag)」を一覧から削除")
+                                .help("登録だけを削除します。モデルのファイルは削除しません。")
+                            }
+                            Divider()
+                            SettingsRow("フォルダ") {
+                                TextField("フォルダ", text: $model.path)
+                                    .font(.system(.callout, design: .monospaced)).help(model.path)
+                            }
+                            if model.tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                SettingsFootnote(text: "タグを入力してください。", symbol: "exclamationmark.circle")
+                            } else if preferences.models.filter({ $0.tag == model.tag }).count > 1 {
+                                SettingsFootnote(text: "APIでタグを指定するには、一意のタグを付けてください。", symbol: "exclamationmark.circle")
+                            }
+                        }
+                        if model.id != preferences.models.last?.id {
+                            Divider().padding(.vertical, 2)
+                        }
                     }
                 }
             }
-            SettingsCard(title: "翻訳") {
+            SettingsCard(title: "翻訳", symbol: "text.bubble") {
                 SettingsRow("長文を自動分割", description: "生成上限に収まるよう段落や文で分割します。翻訳画面とローカルAPIに共通です。") {
                     Toggle("長文を自動分割", isOn: $preferences.autoSplit).labelsHidden()
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
-                Text("最大トークン数は分割した各部分に適用します。上限に達した部分は、さらに細かくして再翻訳します。")
-                    .font(.callout).foregroundStyle(.secondary)
+                SettingsFootnote(text: "最大トークン数は分割した各部分に適用します。上限に達した部分は、さらに細かくして再翻訳します。", symbol: "scissors")
             }
-            SettingsCard(title: "メモリ管理") {
+            SettingsCard(title: "メモリ管理", symbol: "memorychip") {
                 SettingsRow("モデルの自動解放", description: "翻訳画面とローカルAPIに共通です。", hideControlLabels: false) {
                     ModelUnloadControl(preferences: preferences)
                 }
-                Text("翻訳完了からの時間を分単位で指定します。既定は5分、0分は完了後すぐに解放します。解放後は次の翻訳時に読み込み直します。")
-                    .font(.callout).foregroundStyle(.secondary)
+                SettingsFootnote(text: "翻訳完了からの時間を分単位で指定します。既定は5分、0分は完了後すぐに解放します。解放後は次の翻訳時に読み込み直します。", symbol: "clock.arrow.circlepath")
             }
-            SettingsCard(title: "実行環境") {
+            SettingsCard(title: "実行環境", symbol: "terminal") {
                 SettingsRow("Python") {
                     TextField("Python", text: $preferences.python)
                         .font(.system(.callout, design: .monospaced)).help(preferences.python)
                 }
-                Text("推論に使う実行ファイルの絶対パスです。通常は変更する必要はありません。")
-                    .font(.callout).foregroundStyle(.secondary)
+                SettingsFootnote(text: "推論に使う実行ファイルの絶対パスです。通常は変更する必要はありません。", symbol: "info.circle")
             }
         }
     }
@@ -298,31 +302,43 @@ struct PreferencesView: View {
     private var glossarySettings: some View {
         SettingsPage {
             HStack {
-                Text("\(preferences.glossary.count)語").foregroundStyle(.secondary).monospacedDigit()
+                Text("\(preferences.glossary.count)語")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary).monospacedDigit()
                 Spacer()
                 Button("用語を追加", systemImage: "plus") { preferences.glossary.append(GlossaryTerm()) }
                     .buttonStyle(.borderedProminent)
             }
             if preferences.glossary.isEmpty {
-                ContentUnavailableView("用語が登録されていません", systemImage: "character.book.closed",
-                                       description: Text("「用語を追加」から、原語と訳語を登録できます。"))
-                    .frame(maxWidth: .infinity).padding(.vertical, 40)
+                SettingsCard(title: "") {
+                    ContentUnavailableView {
+                        Label("用語が登録されていません", systemImage: "character.book.closed")
+                    } description: {
+                        Text("「用語を追加」から、原語と訳語を登録できます。")
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 30)
+                }
             } else {
-                SettingsCard(title: "用語") {
+                SettingsCard(title: "用語", symbol: "character.book.closed") {
                     ForEach($preferences.glossary) { $term in
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("原語").font(.callout).foregroundStyle(.secondary)
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("原語").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                                 TextField("原語", text: $term.source)
                             }
-                            Image(systemName: "arrow.right").foregroundStyle(.secondary).accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("訳語").font(.callout).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: "arrow.right").font(.system(size: 11))
+                                .foregroundStyle(.tertiary).accessibilityHidden(true)
+                                .padding(.top, 22)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("訳語").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                                 TextField("訳語", text: $term.target)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             Button(role: .destructive) { preferences.glossary.removeAll { $0.id == term.id } } label: {
                                 Image(systemName: "trash")
                             }.buttonStyle(.borderless)
+                                .padding(.top, 18)
                                 .help("用語を削除").accessibilityLabel("用語「\(term.source)」を削除")
                         }
                         if term.id != preferences.glossary.last?.id { Divider() }
@@ -330,15 +346,14 @@ struct PreferencesView: View {
                 }
             }
             if preferences.glossary.contains(where: { $0.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
-                Label("原語と訳語を両方入力してください。不要な行は削除できます。", systemImage: "exclamationmark.circle")
-                    .font(.callout).foregroundStyle(.secondary)
+                SettingsFootnote(text: "原語と訳語を両方入力してください。不要な行は削除できます。", symbol: "exclamationmark.circle")
             }
         }
     }
 
     private var typographySettings: some View {
         SettingsPage {
-            SettingsCard(title: "文字色") {
+            SettingsCard(title: "文字色", symbol: "paintpalette") {
                 SettingsRow("すべての言語に共通") {
                     ColorPicker("文字色", selection: Binding(
                         get: { Color(nsColor: preferences.editorColor) },
@@ -347,8 +362,8 @@ struct PreferencesView: View {
                     Button("リセット") { preferences.textColor = nil }.disabled(preferences.textColor == nil)
                 }
             }
-            fontSection("既定のフォント", font: $preferences.defaultFont)
-            SettingsCard(title: "言語別のフォント") {
+            fontSection("既定のフォント", symbol: "textformat", font: $preferences.defaultFont)
+            SettingsCard(title: "言語別のフォント", symbol: "globe") {
                 SettingsRow("言語") {
                     Picker("言語", selection: $fontLanguage) {
                         ForEach(Language.all) { Text($0.name).tag($0.id) }
@@ -358,26 +373,24 @@ struct PreferencesView: View {
                     get: { preferences.languageFonts[fontLanguage] != nil },
                     set: { preferences.languageFonts[fontLanguage] = $0 ? preferences.defaultFont : nil }
                 ))
-                Text("指定のない言語や、原文の言語を判定できない場合は既定のフォントを使います。原文・訳文に共通です。")
-                    .font(.callout).foregroundStyle(.secondary)
+                SettingsFootnote(text: "指定のない言語や、原文の言語を判定できない場合は既定のフォントを使います。原文・訳文に共通です。", symbol: "info.circle")
             }
             if preferences.languageFonts[fontLanguage] != nil {
-                fontSection(Language.all.first { $0.id == fontLanguage }?.name ?? fontLanguage, font: Binding(
+                fontSection(Language.all.first { $0.id == fontLanguage }?.name ?? fontLanguage, symbol: "character", font: Binding(
                     get: { preferences.languageFonts[fontLanguage] ?? preferences.defaultFont },
                     set: { preferences.languageFonts[fontLanguage] = $0 }
                 ))
             }
-            fontSection("コード用フォント", font: $preferences.codeFont)
-            Text("コード用フォントはMarkdownプレビューのコードブロックとインラインコードに適用します。")
-                .font(.callout).foregroundStyle(.secondary)
+            fontSection("コード用フォント", symbol: "chevron.left.forwardslash.chevron.right", font: $preferences.codeFont)
+            SettingsFootnote(text: "コード用フォントはMarkdownプレビューのコードブロックとインラインコードに適用します。", symbol: "doc.richtext")
         }
     }
 
-    private func fontSection(_ title: String, font: Binding<EditorFont>) -> some View {
+    private func fontSection(_ title: String, symbol: String? = nil, font: Binding<EditorFont>) -> some View {
         let family = Binding(get: { font.wrappedValue.family }, set: {
             font.wrappedValue = EditorFont(family: $0, size: font.wrappedValue.size)
         })
-        return SettingsCard(title: title) {
+        return SettingsCard(title: title, symbol: symbol) {
             SettingsRow("フォント") {
                 Picker("フォント", selection: family) {
                     Text("システム").tag("")
@@ -406,7 +419,7 @@ struct PreferencesView: View {
                 .foregroundStyle(Color(nsColor: preferences.editorColor))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(18)
-                .modifier(ReadingSurface(cornerRadius: 12))
+                .modifier(ReadingSurface(cornerRadius: 12, fill: KotobaTheme.well))
                 .accessibilityLabel("\(title)のフォントプレビュー")
         }
     }
@@ -432,7 +445,7 @@ struct ModelUnloadControl: View {
                 .frame(width: 72)
                 .disabled(preferences.unloadSeconds < 0)
                 .accessibilityLabel("翻訳完了から自動解放までの時間（分）")
-                Text("分後")
+                Text("分後").font(.system(size: 13))
             }
             Toggle("アプリ終了まで保持", isOn: Binding(
                 get: { preferences.unloadSeconds < 0 },

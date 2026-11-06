@@ -35,7 +35,7 @@ struct PresetSettingsView: View {
 
     var body: some View {
         SettingsPage {
-            SettingsCard(title: "自分のプリセット") {
+            SettingsCard(title: "自分のプリセット", symbol: "face.smiling") {
                 if preferences.customPresets.isEmpty {
                     Label("独自の場面や背景を登録できます", systemImage: "face.smiling")
                         .foregroundStyle(.secondary)
@@ -43,35 +43,36 @@ struct PresetSettingsView: View {
                 ForEach(preferences.customPresets) { preset in
                     let binding = presetBinding(preset)
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack {
+                        HStack(alignment: .top, spacing: 12) {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("絵文字").font(.caption).foregroundStyle(.secondary)
+                                Text("絵文字").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                                 // Avoid rewriting marked text while an input method is composing.
                                 TextField("絵文字", text: binding.emoji).labelsHidden()
                                     .help("絵文字（⌃⌘スペース）。空欄の場合は✨を表示します。")
                             }.frame(width: 80)
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("名前").font(.caption).foregroundStyle(.secondary)
+                                Text("名前").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                                 TextField("名前", text: binding.name).labelsHidden()
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             Button(role: .destructive) { preferences.removePreset(preset.id) } label: {
                                 Image(systemName: "minus.circle")
                             }.buttonStyle(.borderless).help("プリセットを削除")
+                                .padding(.top, 18)
                                 .accessibilityLabel("プリセット「\(preset.name)」を削除")
                         }
-                        Text("場面・背景").font(.caption).foregroundStyle(.secondary)
+                        Text("場面・背景").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                         TextEditor(text: binding.contextDescription).font(.body)
                             .scrollContentBackground(.hidden).padding(8).frame(height: 100)
-                            .modifier(ReadingSurface(cornerRadius: 10))
+                            .modifier(ReadingSurface(cornerRadius: 10, fill: KotobaTheme.well))
                             .accessibilityLabel("プリセット「\(preset.name)」の場面・背景")
                     }
                     Divider()
                 }
                 Button("プリセットを追加", systemImage: "plus") { preferences.customPresets.append(ContextPreset()) }
-                Text("原文の前後の文章や場面・背景を記入します。絵文字・名前・説明を保存します。翻訳画面で入力したコンテキストは保存しません。")
-                    .font(.caption).foregroundStyle(.secondary)
+                SettingsFootnote(text: "原文の前後の文章や場面・背景を記入します。絵文字・名前・説明を保存します。翻訳画面で入力したコンテキストは保存しません。", symbol: "info.circle")
             }
-            SettingsCard(title: "アプリ別の自動適用") {
+            SettingsCard(title: "アプリ別の自動適用", symbol: "app.badge") {
                 if preferences.appPresetRules.isEmpty {
                     Label("自動適用するアプリが登録されていません", systemImage: "app.badge")
                         .foregroundStyle(.secondary)
@@ -93,8 +94,7 @@ struct PresetSettingsView: View {
                     Divider()
                 }
                 Button("アプリを追加…", systemImage: "plus", action: preferences.addPresetApp)
-                Text("サービス（キーボードショートカットを含む）から受け取る際に、取得できた呼び出し元アプリに適用します。未登録・取得できない場合や「自動適用しない」は、現在の選択を維持します。")
-                    .font(.caption).foregroundStyle(.secondary)
+                SettingsFootnote(text: "サービス（キーボードショートカットを含む）から受け取る際に、取得できた呼び出し元アプリに適用します。未登録・取得できない場合や「自動適用しない」は、現在の選択を維持します。", symbol: "info.circle")
             }
         }
     }

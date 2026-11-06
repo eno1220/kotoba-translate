@@ -25,7 +25,7 @@ struct InputEditor: NSViewRepresentable {
         editor.isAutomaticTextReplacementEnabled = false
         editor.font = font
         editor.textColor = textColor
-        editor.textContainerInset = NSSize(width: 20, height: 20)
+        editor.textContainerInset = NSSize(width: 16, height: 16)
         editor.drawsBackground = false
         scroll.drawsBackground = false
         editor.isVerticallyResizable = true
