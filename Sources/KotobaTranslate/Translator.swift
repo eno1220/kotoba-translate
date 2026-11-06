@@ -20,6 +20,8 @@ struct WorkerEvent: Decodable {
     var queue_seconds: Double?
     var chunk: Int?
     var chunks: Int?
+    var reason: String?
+    var retries: Int?
 }
 
 @MainActor
@@ -32,6 +34,8 @@ final class Translator: ObservableObject {
     @Published private(set) var importingFile = false
     @Published private(set) var fileProgress = ""
     @Published var fileError: String?
+    @Published var exportError: String?
+    @Published var pendingPDF: URL?
     private var fileTask: Task<Void, Never>?
     private var fileRevision = UUID()
     @Published var articleURL = ""
@@ -64,12 +68,14 @@ final class Translator: ObservableObject {
     }
     @Published var useGlossary = true
     @Published var optionsExpanded = false
-    @Published var maxTokens = 8192
+    @Published var maxTokens = 4096
     @Published var temperature = 0.0
     @Published private(set) var busy = false
     @Published private(set) var startedAt: Date?
     @Published private(set) var loaded = false
     @Published private(set) var status = ""
+    @Published private(set) var recoveryStatus = ""
+    @Published private(set) var translationCompleted = false
     @Published private(set) var progress: Double?
     @Published private(set) var metrics: WorkerEvent?
     @Published var error: String?
@@ -133,6 +139,8 @@ final class Translator: ObservableObject {
         metrics = nil
         progress = nil
         status = ""
+        recoveryStatus = ""
+        translationCompleted = false
         inputFocusRequest = UUID()
     }
 
@@ -191,11 +199,43 @@ final class Translator: ObservableObject {
         panel.message = "PDFまたはテキストファイルを読み込み、原文を置き換えます。処理は端末内で完結します。"
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in self?.importFile(url) }
+            Task { @MainActor in
+                if url.pathExtension.lowercased() == "pdf" {
+                    self?.pendingPDF = url
+                } else {
+                    self?.importFile(url)
+                }
+            }
         }
     }
 
-    func importFile(_ url: URL) {
+    func saveOutput() {
+        guard !output.isEmpty, !busy else { return }
+        let text = output
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.nameFieldStringValue = "翻訳結果.md"
+        let formatPicker = OutputFormatPicker(panel: panel)
+        panel.accessoryView = formatPicker
+        panel.canCreateDirectories = true
+        panel.title = "訳文を保存"
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                do {
+                    try await Task.detached(priority: .userInitiated) {
+                        let access = url.startAccessingSecurityScopedResource()
+                        defer { if access { url.stopAccessingSecurityScopedResource() } }
+                        try text.write(to: url, atomically: true, encoding: .utf8)
+                    }.value
+                } catch {
+                    self?.exportError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func importFile(_ url: URL, pageRange: ClosedRange<Int>? = nil) {
         guard !busy, !fetchingArticle, !importingFile else { return }
         fileError = nil
         importingFile = true
@@ -211,7 +251,7 @@ final class Translator: ObservableObject {
                     guard let script = Bundle.module.url(forResource: "pdf_importer", withExtension: "py", subdirectory: "Resources") else {
                         throw PDFImporter.ImportError.setup
                     }
-                    let result = try await PDFImporter.convert(url, python: importPython, script: script) { current, total in
+                    let result = try await PDFImporter.convert(url, python: importPython, script: script, pageRange: pageRange) { current, total in
                         await self?.updateFileProgress(current, total: total, revision: revision)
                     }
                     text = result.markdown
@@ -341,6 +381,8 @@ final class Translator: ObservableObject {
         committedOutput = ""
         showingDraft = false
         chunkLabel = ""
+        recoveryStatus = ""
+        translationCompleted = false
         status = "モデルを読み込み中"
         do {
             if loadedPath != request.model || pythonPath != preferences.python || process?.isRunning != true {
@@ -365,8 +407,10 @@ final class Translator: ObservableObject {
         if servingAPI { finishAPI(.failure(failure)) }
         else { error = failure.localizedDescription }
         busy = false
+        translationCompleted = false
         progress = nil
-        status = ""
+        status = "翻訳失敗"
+        if !recoveryStatus.isEmpty { recoveryStatus += "（失敗により停止）" }
         stopProcess()
     }
 
@@ -443,6 +487,11 @@ final class Translator: ObservableObject {
             chunkLabel = (event.chunks ?? 1) > 1 ? "（\(event.chunk ?? 1)/\(event.chunks ?? 1)）" : ""
             status = "入力を処理中" + chunkLabel
             progress = nil
+        case "retry":
+            let reason = event.reason == "repetition" ? "繰り返しを検出" : "生成上限に到達"
+            recoveryStatus = "\(reason) → 該当部分を小さく分割して再翻訳（再試行\(event.retries ?? 1)回目）"
+            status = "再分割して再試行中"
+            progress = nil
         case "prefill":
             loaded = true
             status = "入力を処理中" + chunkLabel
@@ -475,8 +524,13 @@ final class Translator: ObservableObject {
             metrics = event
             busy = false
             progress = nil
-            status = event.finish_reason == "length" ? "生成上限に到達" :
-                (event.chunks ?? 1) > 1 ? "完了（\(event.chunks ?? 1)分割）" : "完了"
+            translationCompleted = event.finish_reason != "length"
+            status = translationCompleted ?
+                ((event.chunks ?? 1) > 1 ? "翻訳完了（\(event.chunks ?? 1)分割）" : "翻訳完了") :
+                "生成上限に到達（訳文は途中まで）"
+            if let retries = event.retries, retries > 0 {
+                recoveryStatus = "再分割・再試行\(retries)回で完了"
+            }
             if servingAPI { finishAPI(.success((apiOutput, event))) }
             scheduleUnload(seconds: idleSecondsOverride ?? preferences.unloadSeconds)
         case "error":
@@ -498,8 +552,10 @@ final class Translator: ObservableObject {
         if servingAPI { finishAPI(.failure(CancellationError())) }
         stopProcess()
         busy = false
+        translationCompleted = false
         progress = nil
         status = "中止"
+        if !recoveryStatus.isEmpty { recoveryStatus += "（中止）" }
     }
 
     func unload() {
@@ -533,5 +589,27 @@ final class Translator: ObservableObject {
         loadedPath = nil
         pythonPath = nil
         loaded = false
+    }
+}
+
+private final class OutputFormatPicker: NSPopUpButton {
+    private weak var panel: NSSavePanel?
+
+    init(panel: NSSavePanel) {
+        self.panel = panel
+        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 28), pullsDown: false)
+        addItems(withTitles: ["Markdown (.md)", "テキスト (.txt)"])
+        setAccessibilityLabel("保存形式")
+        target = self
+        action = #selector(changeFormat)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func changeFormat() {
+        guard let panel else { return }
+        let ext = indexOfSelectedItem == 0 ? "md" : "txt"
+        panel.allowedContentTypes = [UTType(filenameExtension: ext) ?? .plainText]
+        panel.nameFieldStringValue = (panel.nameFieldStringValue as NSString).deletingPathExtension + "." + ext
     }
 }

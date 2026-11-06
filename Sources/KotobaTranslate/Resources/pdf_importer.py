@@ -21,7 +21,7 @@ class ImportFailure(Exception):
         self.code = code
 
 
-def convert(path):
+def convert(path, page_range=None):
     if path.stat().st_size > 200 * 1024 * 1024:
         raise ImportFailure("too_large")
     import pypdfium2 as pdfium
@@ -35,7 +35,11 @@ def convert(path):
         raise ImportFailure("too_large")
     if pages == 0:
         raise ImportFailure("empty")
-    emit("progress", current=0, total=pages)
+    start, end = page_range if page_range is not None else (1, pages)
+    if not 1 <= start <= end <= pages:
+        raise ImportFailure("invalid_page_range")
+    selected_pages = end - start + 1
+    emit("progress", current=0, total=selected_pages)
 
     from docling.datamodel.base_models import ConversionStatus, InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions, TableFormerMode
@@ -71,6 +75,7 @@ def convert(path):
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)},
     )
     result = converter.convert(path, max_num_pages=1000, max_file_size=200 * 1024 * 1024,
+                               page_range=(start, end),
                                progress_callback=progress)
     try:
         # Never silently accept partial conversion (e.g. a failed scanned page).
@@ -81,14 +86,15 @@ def convert(path):
             raise ImportFailure("too_large")
         if not markdown:
             raise ImportFailure("empty")
-        emit("result", markdown=markdown, pages=pages)
+        emit("result", markdown=markdown, pages=selected_pages)
     finally:
         result.input.release()
 
 
 def main():
     try:
-        convert(Path(sys.argv[1]))
+        page_range = (int(sys.argv[2]), int(sys.argv[3])) if len(sys.argv) == 4 else None
+        convert(Path(sys.argv[1]), page_range)
     except ImportFailure as error:
         emit("error", code=error.code)
         return 1

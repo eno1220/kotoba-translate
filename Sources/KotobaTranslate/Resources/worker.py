@@ -9,6 +9,7 @@ import time
 import traceback
 
 from translation_chunks import CONTEXT_LIMIT, output_separator, plan_chunks, split_again
+from repetition_guard import RepetitionGuard
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -75,7 +76,7 @@ def translate(r, model, tokenizer, generate, sampler, clear_cache, started, load
     if auto_split:
         emit("planning")
     chunks = deque(plan_chunks(r, tokenizer, build_prompt) if auto_split else [r["text"]])
-    completed = generation_tokens = prompt_tokens = 0
+    completed = generation_tokens = prompt_tokens = retries = 0
     generation_seconds = prompt_seconds = 0.0
     previous = ""
     finish_reason = "stop"
@@ -101,6 +102,8 @@ def translate(r, model, tokenizer, generate, sampler, clear_cache, started, load
         last = None
         pending = []
         last_emit = 0.0
+        guard = RepetitionGuard() if auto_split else None
+        repeated = False
 
         def progress(current, total):
             emit("prefill", current=current, total=total)
@@ -112,6 +115,9 @@ def translate(r, model, tokenizer, generate, sampler, clear_cache, started, load
             )) as stream:
                 for last in stream:
                     pending.append(last.text)
+                    if guard and guard.repeated(last.token):
+                        repeated = True
+                        break  # closing() releases this attempt's generator/KV cache.
                     now = time.perf_counter()
                     if now - last_emit >= 0.05:
                         emit("draft" if auto_split else "delta",
@@ -133,9 +139,19 @@ def translate(r, model, tokenizer, generate, sampler, clear_cache, started, load
             prompt_seconds += len(tokens) / last.prompt_tps
         finish_reason = last.finish_reason if last else "stop"
         if auto_split:
-            if finish_reason == "length":
+            if repeated or finish_reason == "length":
                 emit("draft", text="", tokens=generation_tokens)
-                chunks.extendleft(reversed(split_again(text)))
+                reason = "repetition" if repeated else "length"
+                try:
+                    parts = split_again(text)
+                except ValueError:
+                    if repeated:
+                        raise ValueError("最小の原文単位でも繰り返しを検出しました。Context・辞書や原文を調整して再試行してください。") from None
+                    raise
+                retries += 1
+                emit("retry", reason=reason, retries=retries,
+                     chunk=completed + 1, chunks=completed + len(chunks) + len(parts))
+                chunks.extendleft(reversed(parts))
                 continue
             translated = leading + "".join(pending).strip() + trailing
             separator = output_separator(previous, translated[:1], r["target"])
@@ -151,7 +167,7 @@ def translate(r, model, tokenizer, generate, sampler, clear_cache, started, load
          load_seconds=load_seconds, prompt_tokens=prompt_tokens, tokens=generation_tokens,
          tps=generation_tokens / generation_seconds if generation_seconds else 0,
          prompt_tps=prompt_tokens / prompt_seconds if prompt_seconds else 0,
-         finish_reason=finish_reason, chunk=completed, chunks=completed)
+         finish_reason=finish_reason, chunk=completed, chunks=completed, retries=retries)
 
 
 def main():

@@ -6,6 +6,9 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var articlePopoverPresented = false
+    @State private var pdfAllPages = true
+    @State private var pdfStartPage = "1"
+    @State private var pdfEndPage = "1"
     @FocusState private var articleURLFocused: Bool
     @ObservedObject var preferences: Preferences
     @ObservedObject var translator: Translator
@@ -64,6 +67,19 @@ struct ContentView: View {
         .onChange(of: translator.inputFocusRequest) { _, _ in
             articlePopoverPresented = false
         }
+        .sheet(isPresented: Binding(get: { translator.pendingPDF != nil }, set: {
+            if !$0 { translator.pendingPDF = nil }
+        })) {
+            pdfPageOptions
+                .onAppear {
+                    pdfAllPages = true
+                    pdfStartPage = "1"
+                    pdfEndPage = "1"
+                }
+        }
+        .alert("保存エラー", isPresented: Binding(get: { translator.exportError != nil }, set: { if !$0 { translator.exportError = nil } })) {
+            Button("OK") { translator.exportError = nil }
+        } message: { Text(translator.exportError ?? "") }
         .alert("翻訳エラー", isPresented: Binding(get: { translator.error != nil }, set: { if !$0 { translator.error = nil } })) {
             Button("OK") { translator.error = nil }
         } message: { Text(translator.error ?? "") }
@@ -200,6 +216,11 @@ struct ContentView: View {
                     }.labelsHidden().fixedSize().controlSize(.small).help("日本語の文体")
                 }
                 previewButton("訳文", isOn: $translator.outputPreview)
+                Button(action: translator.saveOutput) {
+                    toolIcon("訳文を保存", symbol: "square.and.arrow.down")
+                }
+                .disabled(translator.output.isEmpty || translator.busy)
+                .help("訳文をファイルに保存")
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(translator.output, forType: .string)
@@ -225,6 +246,53 @@ struct ContentView: View {
         .frame(minWidth: 260, maxHeight: .infinity)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("訳文")
+    }
+
+    private var selectedPDFRange: ClosedRange<Int>? {
+        guard let start = Int(pdfStartPage), let end = Int(pdfEndPage),
+              start >= 1, end >= start else { return nil }
+        return start...end
+    }
+
+    private var pdfPageOptions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("PDFを取り込む").font(.headline)
+            Text(translator.pendingPDF?.lastPathComponent ?? "").lineLimit(2)
+                .foregroundStyle(.secondary)
+            Picker("対象ページ", selection: $pdfAllPages) {
+                Text("すべてのページ").tag(true)
+                Text("ページ範囲を指定").tag(false)
+            }.pickerStyle(.radioGroup)
+            HStack {
+                TextField("開始ページ", text: $pdfStartPage)
+                    .accessibilityLabel("開始ページ")
+                Text("〜")
+                TextField("終了ページ", text: $pdfEndPage)
+                    .accessibilityLabel("終了ページ")
+            }
+            .textFieldStyle(.roundedBorder)
+            .disabled(pdfAllPages)
+            Text("ページ番号は先頭を1として指定します。取り込むと原文を置き換えます。")
+                .font(.caption).foregroundStyle(.secondary)
+            if !pdfAllPages && selectedPDFRange == nil {
+                Text("1以上の開始ページと、それ以降の終了ページを入力してください。")
+                    .font(.caption).foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button("キャンセル") { translator.pendingPDF = nil }
+                    .keyboardShortcut(.cancelAction)
+                Button("取り込む") {
+                    guard let url = translator.pendingPDF else { return }
+                    let range = pdfAllPages ? nil : selectedPDFRange
+                    translator.pendingPDF = nil
+                    translator.importFile(url, pageRange: range)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!pdfAllPages && selectedPDFRange == nil)
+            }
+        }
+        .padding(24).frame(width: 400)
     }
 
     private var translationOptions: some View {
@@ -288,7 +356,7 @@ struct ContentView: View {
                                 .frame(width: 80)
                         }
                         Toggle("長文を自動分割", isOn: $preferences.autoSplit)
-                            .help("段落や文の区切りを優先して分割します。最大トークン数は各部分に適用し、上限に達した部分は再分割して翻訳します。")
+                            .help("段落や文の区切りを優先して分割します。生成上限への到達や長い繰り返しを検出した部分は、さらに小さく分割して再翻訳します。")
                         LabeledContent("Temperature") {
                             TextField("Temperature", value: $translator.temperature, format: .number)
                                 .frame(width: 80)
@@ -327,10 +395,21 @@ struct ContentView: View {
                 } else {
                     ProgressView().controlSize(.small).accessibilityLabel("翻訳を処理中")
                 }
+            } else if translator.translationCompleted {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title2).foregroundStyle(Color.accentColor)
+                    .accessibilityLabel("翻訳完了")
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(translator.status.isEmpty ? idleStatus : translator.status)
-                    .font(.callout).foregroundStyle(.secondary).lineLimit(2).help(translator.status)
+                    .font(.callout.weight(translator.translationCompleted ? .semibold : .regular))
+                    .foregroundStyle(translator.translationCompleted ? Color.primary : Color.secondary)
+                    .lineLimit(2).help(translator.status)
+                if !translator.recoveryStatus.isEmpty {
+                    Text(translator.recoveryStatus)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(2).help(translator.recoveryStatus)
+                }
                 if translator.busy, let startedAt = translator.startedAt {
                     TimelineView(.periodic(from: .now, by: 1)) { clock in
                         Text("経過 \(Int(max(0, clock.date.timeIntervalSince(startedAt))))秒")

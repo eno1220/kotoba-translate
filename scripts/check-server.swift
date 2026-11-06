@@ -11,10 +11,10 @@ struct ServerCheck {
     @MainActor
     static func main() async throws {
         var draft = RequestDraft()
-        try require(draft.maxTokens == "8192", "request builder defaults to 8192 tokens")
+        try require(draft.maxTokens == "4096", "request builder defaults to 4096 tokens")
         let defaultChat = try JSONDecoder().decode(ChatRequest.self, from: Data(#"{"messages":[{"role":"user","content":"hello"}]}"#.utf8))
         let defaultTranslation = try defaultChat.translation(modelPath: "/mock", source: "", target: "ja", form: "", terms: [])
-        try require(defaultTranslation.max_tokens == 8192 && defaultTranslation.auto_split, "API defaults to 8192 tokens and auto splitting")
+        try require(defaultTranslation.max_tokens == 4096 && defaultTranslation.auto_split, "API defaults to 4096 tokens and auto splitting")
         try require(try !defaultChat.translation(modelPath: "/mock", source: "", target: "ja", form: "", terms: [], autoSplit: false).auto_split, "API inherits disabled preference")
         let overrideChat = try JSONDecoder().decode(ChatRequest.self, from: Data(#"{"messages":[{"role":"user","content":"hello"}],"max_tokens":64,"auto_split":true}"#.utf8))
         let overridden = try overrideChat.translation(modelPath: "/mock", source: "", target: "ja", form: "", terms: [], autoSplit: false)
@@ -62,9 +62,11 @@ struct ServerCheck {
                 print(json.dumps(dict(event='delta', text='first:')), flush=True)
             print(json.dumps(dict(event='draft', text='discarded attempt')), flush=True)
             print(json.dumps(dict(event='draft', text='')), flush=True)
+            print(json.dumps(dict(event='retry', reason='repetition', retries=1)), flush=True)
+            time.sleep(0.1)
             print(json.dumps(dict(event='draft', text='provisional translation')), flush=True)
             print(json.dumps(dict(event='delta', text=str(os.getpid()) + ':訳:' + r['text'], tokens=3, tps=30)), flush=True)
-            print(json.dumps(dict(event='done', tokens=3, prompt_tokens=5, tps=30, prompt_tps=100, load_seconds=0.01, elapsed=0.1, finish_reason='stop')), flush=True)
+            print(json.dumps(dict(event='done', tokens=3, prompt_tokens=5, tps=30, prompt_tps=100, load_seconds=0.01, elapsed=0.1, finish_reason='stop', retries=1)), flush=True)
         """.write(to: worker, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: worker.path)
         let preferences = Preferences()
@@ -76,15 +78,20 @@ struct ServerCheck {
         try require(!Preferences().autoSplit, "automatic splitting preference persists")
         preferences.autoSplit = true
         let draftEngine = Translator(preferences: preferences)
-        try require(draftEngine.maxTokens == 8192, "editor defaults to 8192 tokens")
+        try require(draftEngine.maxTokens == 4096, "editor defaults to 4096 tokens")
         draftEngine.input = "draft"
         draftEngine.translate()
+        var sawRecovery = false
         for _ in 0..<200 {
+            if draftEngine.busy && draftEngine.recoveryStatus.contains("繰り返しを検出") { sawRecovery = true }
             if !draftEngine.busy { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         try require(!draftEngine.busy && draftEngine.error == nil && draftEngine.output.hasPrefix("first:") && draftEngine.output.hasSuffix(":訳:draft"), "committed prefix survives draft replacement")
         try require(!draftEngine.output.contains("discarded") && !draftEngine.output.contains("provisional"), "retried drafts do not duplicate editor output")
+        try require(sawRecovery, "retry reason and action remain visible while busy")
+        try require(draftEngine.translationCompleted && draftEngine.status == "翻訳完了", "successful translation has an explicit completion state")
+        try require(draftEngine.recoveryStatus == "再分割・再試行1回で完了", "completion retains retry count")
         draftEngine.unload()
         let engine = Translator(preferences: preferences)
         try await checkPresetsAndFiles(preferences, engine: engine, directory: directory)
@@ -145,7 +152,10 @@ struct ServerCheck {
         let measured = try timings(first)
         try require(measured["generation_tps"] == 30 && measured["prompt_seconds"] == 0.05 && measured["generation_seconds"] == 0.1, "separate prompt and generation timings")
         try require(measured["total_seconds"]! >= measured["first_content_seconds"]! && measured["first_content_seconds"]! >= measured["queue_seconds"]!, "server timing boundaries")
-        try require(server.lastTimings == measured, "API metrics available independently of editor metrics")
+        // JSONSerialization can round the last bits of a Double on decoding.
+        try require(Set(server.lastTimings.keys) == Set(measured.keys) && measured.allSatisfy {
+            abs((server.lastTimings[$0.key] ?? .infinity) - $0.value) < 1e-12
+        }, "API metrics available independently of editor metrics")
         let (second, _) = try await request(body: body("again"))
         try require(try content(second).split(separator: ":").first == firstText.split(separator: ":").first, "worker reuse")
         let (sse, sseReply) = try await request(body: body("stream", stream: true))

@@ -33,6 +33,9 @@ struct CheckPDF {
         }
         context.strokePath()
         context.endPDFPage()
+        context.beginPDFPage(nil)
+        draw("Selected second page only.", size: 16, at: CGPoint(x: 50, y: 720), in: context)
+        context.endPDFPage()
         context.closePDF()
 
         let fake = directory.appendingPathComponent("fixture.py")
@@ -43,6 +46,20 @@ struct CheckPDF {
         """.write(to: fake, atomically: true, encoding: .utf8)
         let result = try await PDFImporter.convert(nativeURL, python: python, script: fake) { _, _ in }
         precondition(result.pages == 1 && result.markdown.contains("日本語"))
+        try """
+        import json, sys
+        assert sys.argv[2:] == ["2", "2"]
+        print(json.dumps(dict(event="result", markdown="Selected page", pages=1)), flush=True)
+        """.write(to: fake, atomically: true, encoding: .utf8)
+        let selected = try await PDFImporter.convert(nativeURL, python: python, script: fake, pageRange: 2...2) { _, _ in }
+        precondition(selected.pages == 1)
+        for range in [0...1, 2...3] {
+            do {
+                _ = try await PDFImporter.convert(nativeURL, python: python, script: worker, pageRange: range) { _, _ in }
+                preconditionFailure("Invalid page range should fail")
+            } catch PDFImporter.ImportError.invalidPageRange { }
+        }
+        print("Page range transport and bounds validation: passed")
 
         let pidFile = directory.appendingPathComponent("pid")
         try """
@@ -86,8 +103,11 @@ struct CheckPDF {
             return
         }
         let native = try await PDFImporter.convert(nativeURL, python: python, script: worker) { _, _ in }
-        precondition(native.pages == 1 && native.markdown.contains("Local PDF extraction"))
+        precondition(native.pages == 2 && native.markdown.contains("Local PDF extraction"))
         precondition(native.markdown.contains("| Language") && native.markdown.contains("Japanese"))
+        let secondPage = try await PDFImporter.convert(nativeURL, python: python, script: worker, pageRange: 2...2) { _, _ in }
+        precondition(secondPage.pages == 1 && secondPage.markdown.contains("Selected second page only"))
+        precondition(!secondPage.markdown.contains("Local PDF extraction"))
         // Rasterize with CoreGraphics; neither application nor fixtures use PDFKit.
         let imageContext = CGContext(data: nil, width: 1224, height: 1584, bitsPerComponent: 8,
                                      bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),

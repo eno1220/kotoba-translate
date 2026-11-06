@@ -11,6 +11,7 @@ stdout = sys.stdout
 import worker
 sys.stdout = stdout
 from translation_chunks import natural_cut, output_separator, plan_chunks, safe_cut, split_again
+from repetition_guard import RepetitionGuard
 
 
 class Tokenizer:
@@ -34,9 +35,11 @@ class ChunkChecks(unittest.TestCase):
         worker.emit = lambda event, **values: self.events.append(dict(event=event, **values))
         self.addCleanup(setattr, worker, "emit", self.old_emit)
 
-    def run_translation(self, r, truncate_above=None, force_length=False):
+    def run_translation(self, r, truncate_above=None, force_length=False, repeat_above=None):
         self.attempts = []
         self.cleared = 0
+        self.closed = 0
+        self.generated = 0
 
         def clear():
             self.cleared += 1
@@ -53,10 +56,17 @@ class ChunkChecks(unittest.TestCase):
             prompt_progress_callback(len(tokens), len(tokens))
             length = force_length or (truncate_above is not None and len(source) > truncate_above)
             output = "DISCARDED" if length else source
-            for index, char in enumerate(output, 1):
-                yield SimpleNamespace(text=char, generation_tokens=index, generation_tps=10,
-                                      prompt_tps=100, finish_reason=("length" if length else "stop")
-                                      if index == len(output) else None)
+            if repeat_above is not None and len(source) > repeat_above:
+                output = ("LOOP!" * max_tokens)[:max_tokens]
+                length = True
+            try:
+                for index, char in enumerate(output, 1):
+                    self.generated += 1
+                    yield SimpleNamespace(text=char, token=ord(char), generation_tokens=index, generation_tps=10,
+                                          prompt_tps=100, finish_reason=("length" if length else "stop")
+                                          if index == len(output) else None)
+            finally:
+                self.closed += 1
 
         worker.translate(r, None, Tokenizer(), generate, None, clear, time.perf_counter(), 0.25)
         return "".join(e["text"] for e in self.events if e["event"] == "delta")
@@ -127,6 +137,53 @@ class ChunkChecks(unittest.TestCase):
         self.assertEqual(self.cleared, len(self.attempts))
         self.assertTrue(any(e["event"] == "draft" and e["text"] == "" for e in self.events))
         self.assertGreater(self.events[-1]["tokens"], len(text.strip()))
+        self.assertTrue(any(e["event"] == "retry" and e["reason"] == "length" for e in self.events))
+
+    def test_repetition_stops_early_and_retries_without_leaking(self):
+        r = request("first sentence. second sentence.\n\nlast sentence.")
+        r["max_tokens"] = 4096
+        output = self.run_translation(r, repeat_above=16)
+        self.assertEqual(output, r["text"])
+        self.assertNotIn("LOOP!", output)
+        self.assertEqual(self.closed, len(self.attempts))
+        self.assertEqual(self.cleared, len(self.attempts))
+        self.assertEqual(self.generated, self.events[-1]["tokens"])
+        retries = [e for e in self.events if e["event"] == "retry"]
+        self.assertTrue(retries)
+        self.assertTrue(all(e["reason"] == "repetition" for e in retries))
+        self.assertEqual(self.events[-1]["retries"], len(retries))
+        self.assertLess(self.generated, 300 * len(self.attempts))
+        self.assertEqual(self.events[-1]["finish_reason"], "stop")
+
+    def test_minimal_fragment_repetition_is_an_explicit_error(self):
+        r = request("x")
+        r["max_tokens"] = 4096
+        with self.assertRaisesRegex(ValueError, "最小の原文単位でも繰り返し"):
+            self.run_translation(r, repeat_above=0)
+        self.assertEqual(self.closed, 1)
+        self.assertEqual(self.cleared, 1)
+        self.assertFalse(any(e["event"] in {"delta", "done"} for e in self.events))
+
+    def test_repetition_guard_cycles_and_bounded_memory(self):
+        for period in [1, 2, 5, 31, 32, 64, 127, 256]:
+            guard = RepetitionGuard()
+            # Include a nonperiodic prefix and empty-decoding-equivalent tokens:
+            # detection relies on IDs, never on decoded text fragments.
+            for token in range(3000, 3173):
+                self.assertFalse(guard.repeated(token))
+            detected = False
+            span = max(4, (guard.MIN_SPAN + period - 1) // period) * period
+            for index in range(span + guard.INTERVAL):
+                if guard.repeated(index % period):
+                    detected = True
+                    break
+            self.assertTrue(detected, period)
+            self.assertLessEqual(len(guard.tokens), guard.WINDOW)
+        guard = RepetitionGuard()
+        rng = random.Random(73)
+        for token in [0] * 191 + [rng.randrange(32000) for _ in range(20000)]:
+            self.assertFalse(guard.repeated(token))
+        self.assertEqual(len(guard.tokens), guard.WINDOW)
 
     def test_minimal_fragment_length_is_an_explicit_error(self):
         with self.assertRaisesRegex(ValueError, "最大トークン数を増やして"):

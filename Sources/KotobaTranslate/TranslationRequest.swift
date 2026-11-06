@@ -64,7 +64,7 @@ struct ChatRequest: Decodable {
         let source = source_lang ?? source
         let target = target_lang ?? target
         let form = self.form ?? (target == "ja" ? defaultForm : "")
-        let maxTokens = max_completion_tokens ?? max_tokens ?? 8192
+        let maxTokens = max_completion_tokens ?? max_tokens ?? 4096
         let temperature = self.temperature ?? 0
         guard Language.all.contains(where: { $0.id == target }),
               source.isEmpty || Language.all.contains(where: { $0.id == source }),

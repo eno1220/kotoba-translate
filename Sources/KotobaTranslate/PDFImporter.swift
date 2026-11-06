@@ -8,7 +8,7 @@ enum PDFImporter {
     }
 
     enum ImportError: LocalizedError {
-        case unreadable, locked, tooLarge, empty, setup, conversion
+        case unreadable, locked, tooLarge, empty, setup, conversion, invalidPageRange
         var errorDescription: String? {
             switch self {
             case .unreadable: return "PDFを開けませんでした。ファイルを確認してください。"
@@ -17,6 +17,7 @@ enum PDFImporter {
             case .empty: return "PDFから文字を抽出できませんでした。"
             case .setup: return "Doclingの準備が必要です。uv syncとREADMEの解析モデル配置手順を実行し、設定のPythonパスを確認してください。"
             case .conversion: return "DoclingでPDFを変換できませんでした。ファイルと解析モデルの配置を確認してください。"
+            case .invalidPageRange: return "ページ範囲が無効です。PDFのページ数以内で、開始ページから終了ページまでを指定してください。"
             }
         }
     }
@@ -42,11 +43,12 @@ enum PDFImporter {
         }
     }
 
-    static func convert(_ url: URL, python: String, script: URL,
+    static func convert(_ url: URL, python: String, script: URL, pageRange: ClosedRange<Int>? = nil,
                         progress: @escaping (Int, Int) async -> Void) async throws -> Result {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         try Task.checkCancellation()
+        if let pageRange, pageRange.lowerBound < 1 { throw ImportError.invalidPageRange }
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size <= 200 * 1024 * 1024 else { throw ImportError.tooLarge }
         let python = (python as NSString).expandingTildeInPath
@@ -57,6 +59,9 @@ enum PDFImporter {
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: python)
         process.arguments = ["-u", script.path, url.path]
+        if let pageRange {
+            process.arguments! += [String(pageRange.lowerBound), String(pageRange.upperBound)]
+        }
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
         process.standardError = FileHandle.standardError
@@ -109,6 +114,7 @@ enum PDFImporter {
                         case "empty": failure = .empty
                         case "unreadable": failure = .unreadable
                         case "setup": failure = .setup
+                        case "invalid_page_range": failure = .invalidPageRange
                         default: failure = .conversion
                         }
                     default: throw ImportError.conversion
