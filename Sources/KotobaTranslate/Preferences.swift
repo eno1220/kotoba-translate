@@ -200,12 +200,13 @@ struct PreferencesView: View {
         } detail: {
             VStack(spacing: 0) {
                 let section = selection ?? .general
-                DetailHeading(title: section.title, description: section.description)
                 switch section {
                 case .general:
                     generalSettings
                 case .presets:
-                    PresetSettingsView(preferences: preferences)
+                    PresetSettingsView(preferences: preferences,
+                                       title: section.title,
+                                       description: section.description)
                 case .typography:
                     typographySettings
                 case .glossary:
@@ -219,8 +220,13 @@ struct PreferencesView: View {
         .preferredColorScheme(.light)
     }
 
+    private func page<Content: View>(_ section: SettingsSection,
+                                     @ViewBuilder content: () -> Content) -> some View {
+        SettingsPage(title: section.title, description: section.description, content: content)
+    }
+
     private var generalSettings: some View {
-        SettingsPage {
+        page(.general) {
             SettingsCard(title: "モデル", symbol: "square.stack.3d.up") {
                 HStack(spacing: 14) {
                     SettingsIcon(symbol: "cpu", size: 40)
@@ -236,10 +242,10 @@ struct PreferencesView: View {
                 if !preferences.models.isEmpty {
                     Divider()
                     SettingsRow("デフォルト") {
-                        Picker("デフォルト", selection: $preferences.defaultModelID) {
-                            Text("先頭のモデル").tag(nil as UUID?)
-                            ForEach(preferences.models) { Text($0.tag).tag(Optional($0.id)) }
-                        }.pickerStyle(.menu).frame(maxWidth: 260)
+                        SelectField(title: "デフォルト", selection: $preferences.defaultModelID,
+                                    options: [SelectOption<UUID?>(value: nil, label: "先頭のモデル")]
+                                        + preferences.models.map { SelectOption(value: Optional($0.id), label: $0.tag) },
+                                    width: 260)
                     }
                 }
                 SettingsFootnote(text: "翻訳を開始するまでモデルは読み込みません。", symbol: "info.circle")
@@ -300,7 +306,7 @@ struct PreferencesView: View {
     }
 
     private var glossarySettings: some View {
-        SettingsPage {
+        page(.glossary) {
             HStack {
                 Text("\(preferences.glossary.count)語")
                     .font(.system(size: 12, weight: .medium))
@@ -352,7 +358,7 @@ struct PreferencesView: View {
     }
 
     private var typographySettings: some View {
-        SettingsPage {
+        page(.typography) {
             SettingsCard(title: "文字色", symbol: "paintpalette") {
                 SettingsRow("すべての言語に共通") {
                     ColorPicker("文字色", selection: Binding(
@@ -365,9 +371,9 @@ struct PreferencesView: View {
             fontSection("既定のフォント", symbol: "textformat", font: $preferences.defaultFont)
             SettingsCard(title: "言語別のフォント", symbol: "globe") {
                 SettingsRow("言語") {
-                    Picker("言語", selection: $fontLanguage) {
-                        ForEach(Language.all) { Text($0.name).tag($0.id) }
-                    }.pickerStyle(.menu).frame(maxWidth: 280)
+                    SelectField(title: "言語", selection: $fontLanguage,
+                                options: Language.all.map { SelectOption(value: $0.id, label: $0.name) },
+                                width: 280)
                 }
                 Toggle("この言語のフォントを指定", isOn: Binding(
                     get: { preferences.languageFonts[fontLanguage] != nil },
@@ -392,20 +398,19 @@ struct PreferencesView: View {
         })
         return SettingsCard(title: title, symbol: symbol) {
             SettingsRow("フォント") {
-                Picker("フォント", selection: family) {
-                    Text("システム").tag("")
-                    ForEach(Self.fontFamilies, id: \.self) { Text($0).tag($0) }
-                }.pickerStyle(.menu).frame(maxWidth: 280)
+                SelectField(title: "フォント", selection: family,
+                            options: [SelectOption(value: "", label: "システム")]
+                                + Self.fontFamilies.map { SelectOption(value: $0, label: $0) },
+                            width: 280)
             }
             Divider()
             SettingsRow("書体") {
-                Picker("書体", selection: Binding(
+                SelectField(title: "書体", selection: Binding(
                     get: { FontCatalog.selectedFace(family: family.wrappedValue, name: font.wrappedValue.face)?.id ?? "" },
                     set: { font.wrappedValue.face = $0 }
-                )) {
-                    ForEach(FontCatalog.faces(for: family.wrappedValue)) { Text($0.label).tag($0.id) }
-                }
-                .pickerStyle(.menu).frame(maxWidth: 280)
+                ), options: FontCatalog.faces(for: family.wrappedValue)
+                    .map { SelectOption(value: $0.id, label: $0.label) },
+                   width: 280)
                 .disabled(FontCatalog.faces(for: family.wrappedValue).count < 2)
             }
             Divider()

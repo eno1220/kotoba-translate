@@ -2,28 +2,36 @@ import AppKit
 import SwiftUI
 
 /// Shared visual language for the translation, settings, and local API windows.
-/// Surfaces stay white or neutral gray; the system accent is reserved for
-/// controls, status, and the few places that carry meaning.
+/// The window itself is white; grouped content and reading surfaces are a
+/// barely-there neutral gray. The system accent is reserved for controls,
+/// status, and the few places that carry meaning.
 enum KotobaTheme {
-    static let canvas = Color(nsColor: .windowBackgroundColor)
+    /// White window backdrop, matching the grouped layout used by recent Apple apps.
+    static let canvas = Color(nsColor: .textBackgroundColor)
+    /// Airier neutral behind the main workspace, so the white reading card floats.
+    static let mainCanvas = Color(white: 0.968)
+    /// Gray fill for grouped settings and API content.
+    static let grouped = Color.primary.opacity(0.045)
+    /// Pure white surface for popovers and editors that need maximum contrast.
     static let surface = Color(nsColor: .textBackgroundColor)
-    static let well = Color.primary.opacity(0.045)
-    static let border = Color.primary.opacity(0.10)
+    static let well = Color.primary.opacity(0.05)
+    static let border = Color.primary.opacity(0.085)
     static let strongBorder = Color.primary.opacity(0.28)
 
     static let accent = Color.accentColor
     static let accentSoft = Color.accentColor.opacity(0.10)
-    static let accentBorder = Color.accentColor.opacity(0.26)
 
     static let cardRadius: CGFloat = 14
-    static let panelRadius: CGFloat = 16
+    static let panelRadius: CGFloat = 18
     static let contentInset: CGFloat = 16
 }
 
-/// A flat, achromatic backdrop. Content sits on white surfaces above it.
+/// A flat, achromatic backdrop. Grouped content sits above it in soft gray.
 struct ScreenBackground: View {
+    var fill: Color = KotobaTheme.canvas
+
     var body: some View {
-        KotobaTheme.canvas.ignoresSafeArea().accessibilityHidden(true)
+        fill.ignoresSafeArea().accessibilityHidden(true)
     }
 }
 
@@ -115,22 +123,168 @@ struct SettingsNavigationLabel: View {
 }
 
 struct SettingsPage<Content: View>: View {
+    var title: String
+    var description: String
     @ViewBuilder var content: Content
+
+    init(title: String = "", description: String = "", @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.description = description
+        self.content = content()
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) { content }
-                .frame(maxWidth: 880, alignment: .leading)
-                .padding(.horizontal, 28)
-                .padding(.top, 8)
-                .padding(.bottom, 28)
-                .frame(maxWidth: .infinity)
+            VStack(alignment: .leading, spacing: 20) {
+                if !title.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title)
+                            .font(.system(size: 22, weight: .bold))
+                            .accessibilityAddTraits(.isHeader)
+                        if !description.isEmpty {
+                            Text(description)
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                content
+            }
+            .frame(maxWidth: 880, alignment: .leading)
+            .padding(.horizontal, 28)
+            .padding(.top, 10)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity)
         }
         .font(.system(size: 14))
         .controlSize(.regular)
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(OutlineTextFieldStyle())
         .toggleStyle(.switch)
         .background(Color.clear)
+    }
+}
+
+/// A thin, near-white single-line field without the stock bezel shadow.
+struct OutlineTextFieldStyle: TextFieldStyle {
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        configuration
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color(nsColor: .textBackgroundColor))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(KotobaTheme.border, lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+}
+
+/// Hover and pressed feedback for the small icon buttons in the main window.
+struct HoverIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HoverBody(configuration: configuration)
+    }
+
+    struct HoverBody: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .background {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isEnabled
+                              ? (configuration.isPressed ? Color.primary.opacity(0.13)
+                                 : hovering ? Color.primary.opacity(0.07) : Color.clear)
+                              : Color.clear)
+                }
+                .onHover { hovering = isEnabled && $0 }
+                .animation(.easeOut(duration: 0.12), value: hovering)
+        }
+    }
+}
+
+struct SelectOption<Value: Hashable>: Identifiable {
+    var value: Value
+    var label: String
+    var id: Value { value }
+}
+
+/// A thin-outlined menu that replaces the stock pop-up button chrome.
+struct SelectField<Value: Hashable>: View {
+    var title: String
+    @Binding var selection: Value
+    var options: [SelectOption<Value>]
+    var placeholder = ""
+    var width: CGFloat?
+    var large = false
+    var compact = false
+
+    @State private var hovering = false
+
+    private var currentLabel: String {
+        options.first { $0.value == selection }?.label ?? placeholder
+    }
+
+    private var height: CGFloat {
+        if compact { return 24 }
+        return large ? 30 : 26
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(options) { option in
+                Button {
+                    selection = option.value
+                } label: {
+                    if option.value == selection {
+                        Label(option.label, systemImage: "checkmark")
+                    } else {
+                        Text(option.label)
+                    }
+                }
+            }
+        } label: {
+            Text(currentLabel)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .font(.system(size: compact ? 11.5 : large ? 14.5 : 13,
+                      weight: large ? .medium : .regular))
+        .foregroundStyle(.primary)
+        .padding(.leading, compact ? 7 : large ? 10 : 9)
+        .padding(.trailing, compact ? 24 : large ? 28 : 26)
+        .frame(width: width, alignment: .leading)
+        .frame(minHeight: height)
+        .background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(hovering ? KotobaTheme.grouped : Color(nsColor: .textBackgroundColor))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(hovering ? Color.primary.opacity(0.22) : KotobaTheme.border,
+                              lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .overlay(alignment: .trailing) {
+            Image(systemName: "chevron.down")
+                .font(.system(size: large ? 9.5 : 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.trailing, compact ? 8 : large ? 10 : 9)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .onHover { hovering = $0 }
+        .accessibilityLabel(title)
     }
 }
 
@@ -164,13 +318,14 @@ struct SettingsCard<Content: View>: View {
             VStack(alignment: .leading, spacing: 10) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(KotobaTheme.contentInset)
-                .background(KotobaTheme.surface,
+                .background(KotobaTheme.grouped,
                             in: RoundedRectangle(cornerRadius: KotobaTheme.cardRadius, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: KotobaTheme.cardRadius, style: .continuous)
-                        .strokeBorder(contrast == .increased ? KotobaTheme.strongBorder : KotobaTheme.border,
-                                      lineWidth: contrast == .increased ? 1.5 : 1)
-                        .allowsHitTesting(false)
+                    if contrast == .increased {
+                        RoundedRectangle(cornerRadius: KotobaTheme.cardRadius, style: .continuous)
+                            .strokeBorder(KotobaTheme.strongBorder, lineWidth: 1.5)
+                            .allowsHitTesting(false)
+                    }
                 }
         }
     }
@@ -206,25 +361,6 @@ struct SettingsRow<Control: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-}
-
-struct DetailHeading: View {
-    var title: String
-    var description: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title)
-                .font(.system(size: 23, weight: .bold))
-                .accessibilityAddTraits(.isHeader)
-            Text(description).font(.system(size: 13)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: 880, alignment: .leading)
-        .padding(.horizontal, 28)
-        .padding(.top, 18).padding(.bottom, 4)
-        .frame(maxWidth: .infinity)
     }
 }
 

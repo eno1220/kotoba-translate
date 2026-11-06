@@ -16,7 +16,7 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            ScreenBackground()
+            ScreenBackground(fill: KotobaTheme.mainCanvas)
             VStack(spacing: 12) {
                 HStack(alignment: .top, spacing: 14) {
                     VStack(spacing: 10) {
@@ -113,7 +113,7 @@ struct ContentView: View {
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(HoverIconButtonStyle())
         .disabled(translator.source.isEmpty)
         .accessibilityLabel("原文と訳文の言語を入れ替え")
         .help("原文と訳文の言語を入れ替え")
@@ -121,20 +121,16 @@ struct ContentView: View {
 
     private func languageField(_ accessibilityLabel: String, label: String,
                                selection: Binding<String>, automatic: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
+        HStack(alignment: .center, spacing: 8) {
             Text(label)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
-            Picker(accessibilityLabel, selection: selection) {
-                if automatic { Text("自動検出").tag("") }
-                ForEach(Language.all) { language in Text(language.name).tag(language.id) }
-            }
-            .labelsHidden().pickerStyle(.menu)
-            .controlSize(.large)
-            .font(.system(size: 15, weight: .medium))
-            .fixedSize()
-            .accessibilityLabel(accessibilityLabel)
-            .help(accessibilityLabel)
+            SelectField(title: accessibilityLabel, selection: selection,
+                        options: (automatic ? [SelectOption(value: "", label: "自動検出")] : [])
+                            + Language.all.map { SelectOption(value: $0.id, label: $0.name) },
+                        width: 150, large: true)
+                .accessibilityLabel(accessibilityLabel)
+                .help(accessibilityLabel)
         }
     }
 
@@ -161,7 +157,7 @@ struct ContentView: View {
                 Button { translator.input = "" } label: { toolIcon("原文を消去", symbol: "xmark") }
                     .disabled(translator.input.isEmpty).help("原文を消去")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(HoverIconButtonStyle())
             .padding(.horizontal, 16).padding(.vertical, 10)
             .overlay(alignment: .bottom) { Divider().opacity(0.55) }
             if translator.sourcePreview {
@@ -239,7 +235,7 @@ struct ContentView: View {
     private var articleURLBar: some View {
         HStack(spacing: 8) {
             TextField("記事のURL", text: $translator.articleURL)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(OutlineTextFieldStyle())
                 .accessibilityLabel("記事のURL")
                 .focused($articleURLFocused)
                 .onSubmit { translator.fetchArticle() }
@@ -262,11 +258,12 @@ struct ContentView: View {
                 paneHeading("訳文", symbol: "text.bubble")
                 Spacer(minLength: 4)
                 if translator.target == "ja" {
-                    Picker("文体", selection: $translator.form) {
-                        Text("文体の指定なし").tag("")
-                        Text("常体").tag("plain")
-                        Text("敬体").tag("polite")
-                    }.labelsHidden().fixedSize().controlSize(.small).help("日本語の文体")
+                    SelectField(title: "文体", selection: $translator.form,
+                                options: [SelectOption(value: "", label: "文体の指定なし"),
+                                          SelectOption(value: "plain", label: "常体"),
+                                          SelectOption(value: "polite", label: "敬体")],
+                                width: 150, compact: true)
+                        .help("日本語の文体")
                 }
                 previewButton("訳文", isOn: $translator.outputPreview)
                 Button(action: translator.saveOutput) {
@@ -280,7 +277,7 @@ struct ContentView: View {
                 } label: { toolIcon("訳文をコピー", symbol: "doc.on.doc") }
                     .disabled(translator.output.isEmpty).help("訳文をコピー")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(HoverIconButtonStyle())
             .padding(.horizontal, 16).padding(.vertical, 10)
             .overlay(alignment: .bottom) { Divider().opacity(0.55) }
             if translator.outputPreview {
@@ -330,7 +327,7 @@ struct ContentView: View {
                 TextField("終了ページ", text: $pdfEndPage)
                     .accessibilityLabel("終了ページ")
             }
-            .textFieldStyle(.roundedBorder)
+            .textFieldStyle(OutlineTextFieldStyle())
             .disabled(pdfAllPages)
             Text("ページ番号は先頭を1として指定します。取り込むと原文を置き換えます。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -372,7 +369,7 @@ struct ContentView: View {
                 Spacer(minLength: 4)
                 Button { translator.optionsExpanded = false } label: {
                     toolIcon("翻訳オプションを閉じる", symbol: "xmark")
-                }.buttonStyle(.borderless).help("翻訳オプションを閉じる（⌥⌘O）")
+                }.buttonStyle(HoverIconButtonStyle()).help("翻訳オプションを閉じる（⌥⌘O）")
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             Divider().opacity(0.6)
@@ -391,11 +388,11 @@ struct ContentView: View {
                             .background(KotobaTheme.well,
                                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         } else {
-                            Picker("モデル", selection: $translator.modelID) {
-                                Text("モデルを選択").tag(nil as UUID?)
-                                ForEach(preferences.models) { Text($0.tag).tag(Optional($0.id)) }
-                            }.labelsHidden().pickerStyle(.menu)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            SelectField(title: "モデル", selection: $translator.modelID,
+                                        options: [SelectOption<UUID?>(value: nil, label: "モデルを選択")]
+                                            + preferences.models.map { SelectOption(value: Optional($0.id), label: $0.tag) },
+                                        placeholder: "モデルを選択",
+                                        width: 268)
                             HStack(spacing: 7) {
                                 Circle().fill(translator.busy || translator.loaded ? Color.green : Color.secondary.opacity(0.5))
                                     .frame(width: 7, height: 7).accessibilityHidden(true)
@@ -411,11 +408,10 @@ struct ContentView: View {
                     }
                     Divider().opacity(0.6)
                     optionSection("コンテキスト", symbol: "text.bubble") {
-                        Picker("プリセット", selection: $translator.presetID) {
-                            Text("プリセットなし").tag(nil as String?)
-                            ForEach(preferences.contextPresets) { Text($0.label).tag(Optional($0.id)) }
-                        }.labelsHidden().pickerStyle(.menu)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        SelectField(title: "プリセット", selection: $translator.presetID,
+                                    options: [SelectOption<String?>(value: nil, label: "プリセットなし")]
+                                        + preferences.contextPresets.map { SelectOption(value: Optional($0.id), label: $0.label) },
+                                    width: 268)
                         if let preset = translator.selectedPreset {
                             Text(preset.contextDescription)
                                 .font(.system(size: 12)).foregroundStyle(.secondary)
@@ -445,15 +441,14 @@ struct ContentView: View {
                         Text("入力と生成の合計は32,768トークン以内です。")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                         Divider().opacity(0.5)
-                        Toggle("長文を自動分割", isOn: $preferences.autoSplit)
-                            .toggleStyle(.switch)
-                            .help("段落や文の区切りを優先して分割します。生成上限への到達や長い繰り返しを検出した部分は、さらに小さく分割して再翻訳します。")
-                        Toggle("辞書を使用（\(preferences.glossary.filter { !$0.source.isEmpty && !$0.target.isEmpty }.count)語）",
-                               isOn: $translator.useGlossary)
-                            .toggleStyle(.switch)
+                        optionToggle("長文を自動分割", isOn: $preferences.autoSplit,
+                                     help: "段落や文の区切りを優先して分割します。生成上限への到達や長い繰り返しを検出した部分は、さらに小さく分割して再翻訳します。")
+                        optionToggle("辞書を使用（\(preferences.glossary.filter { !$0.source.isEmpty && !$0.target.isEmpty }.count)語）",
+                                     isOn: $translator.useGlossary,
+                                     help: "登録した用語を翻訳に反映します。")
                     }
                     .font(.system(size: 13))
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(OutlineTextFieldStyle())
                 }
                 .padding(16)
             }
@@ -491,6 +486,18 @@ struct ContentView: View {
             content()
         }
         .frame(minHeight: 26)
+    }
+
+    private func optionToggle(_ title: String, isOn: Binding<Bool>, help: String) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+        .frame(minHeight: 26)
+        .help(help)
     }
 
     // MARK: Status and actions
@@ -590,7 +597,7 @@ struct ContentView: View {
         Toggle(isOn: isOn) {
             toolIcon("Markdownプレビュー", symbol: "doc.richtext")
         }
-        .toggleStyle(.button).buttonStyle(.borderless)
+        .toggleStyle(.button).buttonStyle(HoverIconButtonStyle())
         .foregroundStyle(isOn.wrappedValue ? KotobaTheme.accent : Color.secondary)
         .background(isOn.wrappedValue ? KotobaTheme.accentSoft : .clear,
                     in: RoundedRectangle(cornerRadius: 7, style: .continuous))

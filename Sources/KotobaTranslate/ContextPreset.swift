@@ -32,9 +32,11 @@ struct AppPresetRule: Identifiable, Codable {
 
 struct PresetSettingsView: View {
     @ObservedObject var preferences: Preferences
+    var title = "プリセット"
+    var description = "よく使う場面や背景を、翻訳に適用できます。"
 
     var body: some View {
-        SettingsPage {
+        SettingsPage(title: title, description: description) {
             SettingsCard(title: "自分のプリセット", symbol: "face.smiling") {
                 if preferences.customPresets.isEmpty {
                     Label("独自の場面や背景を登録できます", systemImage: "face.smiling")
@@ -81,10 +83,10 @@ struct PresetSettingsView: View {
                     let binding = ruleBinding(rule)
                     HStack {
                         Text(rule.name).help(rule.id).frame(maxWidth: .infinity, alignment: .leading)
-                        Picker("プリセット", selection: binding.presetID) {
-                            Text("自動適用しない").tag(nil as String?)
-                            ForEach(preferences.contextPresets) { Text($0.label).tag(Optional($0.id)) }
-                        }.pickerStyle(.menu).labelsHidden().frame(width: 210)
+                        SelectField(title: "\(rule.name)のプリセット", selection: binding.presetID,
+                                    options: [SelectOption<String?>(value: nil, label: "自動適用しない")]
+                                        + preferences.contextPresets.map { SelectOption(value: Optional($0.id), label: $0.label) },
+                                    width: 210)
                             .accessibilityLabel("\(rule.name)のプリセット")
                         Button(role: .destructive) { preferences.appPresetRules.removeAll { $0.id == rule.id } } label: {
                             Image(systemName: "minus.circle")

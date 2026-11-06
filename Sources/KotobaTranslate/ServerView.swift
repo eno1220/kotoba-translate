@@ -62,8 +62,6 @@ struct ServerView: View {
             }
         } detail: {
             VStack(spacing: 0) {
-                DetailHeading(title: (selection ?? .connection).title,
-                              description: selection == .request ? "JSONを作成して、このMacのAPIで翻訳を試します。" : "このMacのアプリから翻訳に接続します。")
                 ZStack {
                     // Keep the draft when navigating, and cancel its request when leaving it.
                     RequestBuilderView(server: server, active: selection == .request)
@@ -89,7 +87,7 @@ struct ServerView: View {
     }
 
     private var connectionSettings: some View {
-        SettingsPage {
+        SettingsPage(title: "サーバー", description: "このMacのアプリから翻訳に接続します。") {
             SettingsCard(title: "") {
                 HStack(alignment: .center, spacing: 16) {
                     SettingsIcon(symbol: "network", size: 44)
@@ -163,28 +161,30 @@ struct ServerView: View {
             }
             SettingsCard(title: "翻訳の既定値", symbol: "globe") {
                 SettingsRow("モデル") {
-                    Picker("モデル", selection: $server.modelID) {
-                        Text("設定のデフォルト").tag(nil as UUID?)
-                        ForEach(preferences.models) { Text($0.tag).tag(Optional($0.id)) }
-                    }.pickerStyle(.menu).frame(maxWidth: 280)
+                    SelectField(title: "モデル", selection: $server.modelID,
+                                options: [SelectOption<UUID?>(value: nil, label: "設定のデフォルト")]
+                                    + preferences.models.map { SelectOption(value: Optional($0.id), label: $0.tag) },
+                                width: 280)
                 }
                 if preferences.models.isEmpty {
                     SettingsFootnote(text: "翻訳には、設定画面でモデルを登録してください。", symbol: "info.circle")
                 }
                 Divider()
                 SettingsRow("原文の言語") {
-                    languagePicker("原文の言語", selection: $server.source, automatic: true).frame(width: 220)
+                    languagePicker("原文の言語", selection: $server.source, automatic: true)
                 }
                 Divider()
                 SettingsRow("訳文の言語") {
-                    languagePicker("訳文の言語", selection: $server.target, automatic: false).frame(width: 220)
+                    languagePicker("訳文の言語", selection: $server.target, automatic: false)
                 }
                 if server.target == "ja" {
                     Divider()
                     SettingsRow("文体") {
-                        Picker("文体", selection: $server.form) {
-                            Text("指定なし").tag(""); Text("常体").tag("plain"); Text("敬体").tag("polite")
-                        }.pickerStyle(.menu).frame(width: 160)
+                        SelectField(title: "文体", selection: $server.form,
+                                    options: [SelectOption(value: "", label: "指定なし"),
+                                              SelectOption(value: "plain", label: "常体"),
+                                              SelectOption(value: "polite", label: "敬体")],
+                                    width: 160)
                     }
                 }
                 SettingsFootnote(text: "リクエストで言語・文体を省略した場合に使います。", symbol: "info.circle")
@@ -275,9 +275,9 @@ private struct ServerCapacityView: View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsCard(title: "混雑時の処理", symbol: "speedometer") {
                 SettingsRow("最大並列数") {
-                    Picker("最大並列数", selection: $pool.maxConcurrency) {
-                        ForEach(1...4, id: \.self) { Text("\($0)件").tag($0) }
-                    }.pickerStyle(.menu).frame(width: 160)
+                    SelectField(title: "最大並列数", selection: $pool.maxConcurrency,
+                                options: (1...4).map { SelectOption(value: $0, label: "\($0)件") },
+                                width: 160)
                 }
                 Divider()
                 SettingsRow("バッテリー時", description: "バッテリー駆動中も並列数を増やすことを許可します。") {
@@ -286,9 +286,9 @@ private struct ServerCapacityView: View {
                 }
                 Divider()
                 SettingsRow("メモリの余裕") {
-                    Picker("確保するメモリの余裕", selection: $pool.reserveGB) {
-                        ForEach([2, 4, 8, 12, 16], id: \.self) { Text("\($0) GB").tag($0) }
-                    }.pickerStyle(.menu).frame(width: 160)
+                    SelectField(title: "確保するメモリの余裕", selection: $pool.reserveGB,
+                                options: [2, 4, 8, 12, 16].map { SelectOption(value: $0, label: "\($0) GB") },
+                                width: 160)
                 }
                 DisclosureGroup("並列処理について") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -365,7 +365,7 @@ private struct RequestBuilderView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SettingsPage {
+            SettingsPage(title: "リクエストを試す", description: "JSONを作成して、このMacのAPIで翻訳を試します。") {
                 SettingsCard(title: "翻訳する内容", symbol: "1.circle.fill") {
                     Text("原文").font(.system(size: 13, weight: .semibold))
                         .accessibilityAddTraits(.isHeader)
@@ -374,18 +374,20 @@ private struct RequestBuilderView: View {
                         .modifier(ReadingSurface(cornerRadius: 12, fill: KotobaTheme.well))
                         .accessibilityLabel("JSONに含める原文")
                     SettingsRow("原文の言語") {
-                        languagePicker("原文の言語", selection: $draft.source, automatic: true).frame(width: 220)
+                        languagePicker("原文の言語", selection: $draft.source, automatic: true)
                     }
                     Divider()
                     SettingsRow("訳文の言語") {
-                        languagePicker("訳文の言語", selection: $draft.target, automatic: false).frame(width: 220)
+                        languagePicker("訳文の言語", selection: $draft.target, automatic: false)
                     }
                     if draft.target == "ja" {
                         Divider()
                         SettingsRow("文体") {
-                            Picker("文体", selection: $draft.form) {
-                                Text("指定なし").tag(""); Text("常体").tag("plain"); Text("敬体").tag("polite")
-                            }.pickerStyle(.menu).frame(width: 160)
+                            SelectField(title: "文体", selection: $draft.form,
+                                        options: [SelectOption(value: "", label: "指定なし"),
+                                                  SelectOption(value: "plain", label: "常体"),
+                                                  SelectOption(value: "polite", label: "敬体")],
+                                        width: 160)
                         }
                     }
                     Text("コンテキスト（任意）").font(.system(size: 13, weight: .semibold))
@@ -545,10 +547,10 @@ private struct RequestBuilderView: View {
 }
 
 private func languagePicker(_ title: String, selection: Binding<String>, automatic: Bool) -> some View {
-    Picker(title, selection: selection) {
-        if automatic { Text("自動検出").tag("") }
-        ForEach(Language.all) { Text($0.name).tag($0.id) }
-    }.pickerStyle(.menu)
+    SelectField(title: title, selection: selection,
+                options: (automatic ? [SelectOption(value: "", label: "自動検出")] : [])
+                    + Language.all.map { SelectOption(value: $0.id, label: $0.name) },
+                width: 220)
 }
 
 private func copy(_ value: String) {
