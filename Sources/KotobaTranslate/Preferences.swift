@@ -156,7 +156,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .typography: "文字"
         case .glossary: "辞書"
         case .server: "ローカルAPI"
-        case .request: "リクエストを試す"
+        case .request: "API接続設定"
         }
     }
     var symbol: String {
@@ -172,11 +172,11 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var description: String {
         switch self {
         case .general: "モデルと実行環境を管理します。"
-        case .presets: "よく使う場面や背景を、翻訳に適用できます。"
-        case .typography: "言語ごとのフォントと、共通の文字色を調整します。"
-        case .glossary: "すべての翻訳で使う、原語と訳語の対応を登録します。"
-        case .server: "このMacのアプリから翻訳に接続します。"
-        case .request: "JSONを作成して、このMacのAPIで翻訳を試します。"
+        case .presets: "指示設定のプリセットを管理します。"
+        case .typography: "表示するフォントと文字色を管理します。"
+        case .glossary: "翻訳時に使用する辞書を管理します。"
+        case .server: "翻訳用のローカルAPIサーバを管理します。"
+        case .request: "ローカルAPIサーバへの接続を試します。"
         }
     }
 }
@@ -265,7 +265,7 @@ struct PreferencesView: View {
                                     width: 260)
                     }
                 }
-                SettingsFootnote(text: "翻訳を開始するまでモデルは読み込みません。", symbol: "info.circle")
+                SettingsFootnote(text: "翻訳を開始するまでモデルは読み込まれません。", symbol: "info.circle")
             }
             if !preferences.models.isEmpty {
                 SettingsCard(title: "登録済みのモデル（\(preferences.models.count)）", symbol: "shippingbox") {
@@ -273,14 +273,14 @@ struct PreferencesView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             SettingsRow("タグ") {
                                 TextField("タグ", text: $model.tag)
-                                    .help("翻訳画面に表示する名前。APIで指定する場合は一意のタグを使います。")
+                                    .help("翻訳画面に表示する名前。APIで指定する場合は一意のタグを使用します。")
                                 Button(role: .destructive) {
                                     if preferences.defaultModelID == model.id { preferences.defaultModelID = nil }
                                     preferences.models.removeAll { $0.id == model.id }
                                 } label: { Image(systemName: "trash") }
                                 .buttonStyle(.borderless)
                                 .accessibilityLabel("モデル「\(model.tag)」を一覧から削除")
-                                .help("登録だけを削除します。モデルのファイルは削除しません。")
+                                .help("登録のみ削除し、モデルのファイルは削除しません。")
                             }
                             Divider()
                             SettingsRow("フォルダ") {
@@ -290,7 +290,7 @@ struct PreferencesView: View {
                             if model.tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 SettingsFootnote(text: "タグを入力してください。", symbol: "exclamationmark.circle")
                             } else if preferences.models.filter({ $0.tag == model.tag }).count > 1 {
-                                SettingsFootnote(text: "APIでタグを指定するには、一意のタグを付けてください。", symbol: "exclamationmark.circle")
+                                SettingsFootnote(text: "APIでタグを指定するには、一意のタグを設定してください。", symbol: "exclamationmark.circle")
                             }
                         }
                         if model.id != preferences.models.last?.id {
@@ -300,24 +300,22 @@ struct PreferencesView: View {
                 }
             }
             SettingsCard(title: "翻訳", symbol: "text.bubble") {
-                SettingsRow("長文を自動分割", description: "生成上限に収まるよう段落や文で分割します。翻訳画面とローカルAPIに共通です。") {
+                SettingsRow("長文を自動分割", description: "生成するコンテキスト長の上限に収まるよう、段落や文を分割します。") {
                     Toggle("長文を自動分割", isOn: $preferences.autoSplit).labelsHidden()
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
-                SettingsFootnote(text: "最大トークン数は分割した各部分に適用します。上限に達した部分は、さらに細かくして再翻訳します。", symbol: "scissors")
             }
             SettingsCard(title: "メモリ管理", symbol: "memorychip") {
-                SettingsRow("モデルの自動解放", description: "翻訳画面とローカルAPIに共通です。", hideControlLabels: false) {
+                SettingsRow("モデルの自動解放",  hideControlLabels: false) {
                     ModelUnloadControl(preferences: preferences)
                 }
-                SettingsFootnote(text: "翻訳完了からの時間を分単位で指定します。既定は5分、0分は完了後すぐに解放します。解放後は次の翻訳時に読み込み直します。", symbol: "clock.arrow.circlepath")
+                SettingsFootnote(text: "翻訳完了からの時間を分単位で指定します。0分を指定すると翻訳完了後即座に解放します。モデルは次回翻訳を開始する際に再度読み込まれます。", symbol: "clock.arrow.circlepath")
             }
             SettingsCard(title: "実行環境", symbol: "terminal") {
                 SettingsRow("Python") {
                     TextField("Python", text: $preferences.python)
                         .font(.system(.callout, design: .monospaced)).help(preferences.python)
                 }
-                SettingsFootnote(text: "推論に使う実行ファイルの絶対パスです。通常は変更する必要はありません。", symbol: "info.circle")
             }
         }
     }
@@ -396,7 +394,7 @@ struct PreferencesView: View {
                     get: { preferences.languageFonts[fontLanguage] != nil },
                     set: { preferences.languageFonts[fontLanguage] = $0 ? preferences.defaultFont : nil }
                 ))
-                SettingsFootnote(text: "指定のない言語や、原文の言語を判定できない場合は既定のフォントを使います。原文・訳文に共通です。", symbol: "info.circle")
+                SettingsFootnote(text: "指定のない言語や、原文の言語を判定できない場合は既定のフォントを使用します", symbol: "info.circle")
             }
             if preferences.languageFonts[fontLanguage] != nil {
                 fontSection(Language.all.first { $0.id == fontLanguage }?.name ?? fontLanguage, symbol: "character", font: Binding(
@@ -405,7 +403,7 @@ struct PreferencesView: View {
                 ))
             }
             fontSection("コード用フォント", symbol: "chevron.left.forwardslash.chevron.right", font: $preferences.codeFont)
-            SettingsFootnote(text: "コード用フォントはMarkdownプレビューのコードブロックとインラインコードに適用します。", symbol: "doc.richtext")
+            SettingsFootnote(text: "Markdownプレビューのコードブロックとインラインコードに適用します。", symbol: "doc.richtext")
         }
     }
 

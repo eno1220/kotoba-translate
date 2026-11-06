@@ -29,7 +29,7 @@ struct ServerSettingsView: View {
     private var serverSummary: String {
         if server.starting { return "接続の準備をしています。" }
         if server.running { return "127.0.0.1:\(server.port) で接続を受け付けています。" }
-        return "開始すると、このMacからの接続を待ち受けます。"
+        return "翻訳用ローカルAPIサーバを開始します。"
     }
 
     var body: some View {
@@ -44,7 +44,7 @@ struct ServerSettingsView: View {
     }
 
     private var connectionSettings: some View {
-        SettingsPage(title: "ローカルAPI", description: "このMacのアプリから翻訳に接続します。") {
+        SettingsPage(title: "ローカルAPI", description: "翻訳用ローカルAPIサーバを管理します。") {
             SettingsCard(title: "") {
                 HStack(alignment: .center, spacing: 16) {
                     SettingsIcon(symbol: "network", size: 44)
@@ -70,7 +70,7 @@ struct ServerSettingsView: View {
                     }
                 }
                 Divider()
-                SettingsFootnote(text: "このMacからのみ接続できます。利用中はアプリを起動しておいてください。", symbol: "lock.shield")
+                SettingsFootnote(text: "この端末内からのみ接続することができます。利用中はアプリを終了しないでください。", symbol: "lock.shield")
                 if let error = server.error {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.red).textSelection(.enabled)
@@ -89,7 +89,7 @@ struct ServerSettingsView: View {
                     Button { copy("plamo-translate") } label: { Image(systemName: "doc.on.doc") }
                         .accessibilityLabel("モデル名をコピー").help("モデル名をコピー")
                 }
-                SettingsFootnote(text: "OpenAI互換APIに対応したアプリに、Base URL・APIキー・モデル名を入力します。登録した一意のタグや、モデル一覧APIのIDも指定できます。", symbol: "info.circle")
+                SettingsFootnote(text: "OpenAI互換APIに対応したアプリに、Base URL・APIキー・モデル名を入力してください。登録した一意のタグや、モデル一覧APIのIDも指定することができます。", symbol: "info.circle")
             }
             SettingsCard(title: "接続設定", symbol: "lock") {
                 SettingsRow("ポート", description: "127.0.0.1に限定して接続を受け付けます。") {
@@ -102,7 +102,7 @@ struct ServerSettingsView: View {
                         .disabled(server.running || server.starting)
                 }
                 HStack(spacing: 10) {
-                    Text("接続設定は停止中に変更できます。")
+                    Text("接続設定は停止中にのみ変更できます。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                     Spacer()
                     Button("コピー") { copy(server.apiKey) }.disabled(server.apiKey.isEmpty)
@@ -144,7 +144,7 @@ struct ServerSettingsView: View {
                                     width: 160)
                     }
                 }
-                SettingsFootnote(text: "リクエストで言語・文体を省略した場合に使います。", symbol: "info.circle")
+                SettingsFootnote(text: "リクエストに言語・文体の指示がない場合に使用されます。", symbol: "info.circle")
             }
             ServerCapacityView(pool: server.inference)
             sharedModelSettings
@@ -176,7 +176,7 @@ struct ServerSettingsView: View {
                         Button("翻訳を中止", action: translator.cancel)
                     }
                 }
-                SettingsFootnote(text: "翻訳完了からの時間を分単位で指定します。既定は5分、0分は完了後すぐに解放します。翻訳画面とAPIで共有し、混雑時に追加したモデルは30秒後に解放します。", symbol: "clock")
+                SettingsFootnote(text: "翻訳完了からの時間を分単位で指定します。0分に設定すると翻訳完了後即座に解放されます。この設定はアプリ内の翻訳とローカルAPIで共有されます。混雑時に並列実行するモデルは翻訳完了30秒後に解放されます。", symbol: "clock")
             }
             if translator.busy || translator.metrics != nil || !server.lastTimings.isEmpty {
                 SettingsCard(title: "計測情報", symbol: "chart.bar") {
@@ -217,7 +217,7 @@ struct ServerSettingsView: View {
                                 }
                             }.padding(.top, 8)
                         }
-                        .help("サーバー内の計測です。合計は待機やPython起動を含みます。入力処理・生成はMLXの速度から算出。転送・描画時間は含みません。")
+                        .help("待機時間やPythonの起動時間を含みます。入力処理・生成はMLXの速度から算出しています。")
                     }
                 }
             }
@@ -249,8 +249,8 @@ private struct ServerCapacityView: View {
                 }
                 DisclosureGroup("並列処理について") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("通常は1並列。最大32件を待機させ、電源・温度・メモリを確認して必要なときだけ増やします。低電力モード・高温・メモリプレッシャー時は1並列。実行中の翻訳は完了まで続けます。")
-                        Text("速度を優先する場合は、この設定と接続するアプリ側の並列数を1にしてください。並列ごとにモデル用メモリが必要で、GPUの競合により遅くなる場合があります。2以上はページ全体の完了時間を比較して選んでください。")
+                        Text("通常は1並列。最大32件を待機させ、電源・温度・メモリの状態に応じて並列数が自動で調整されます。低電力モードに設定されている場合や端末が高温のとき、メモリの空きが少ない場合には1並列となります。")
+                        Text("並列数を増やすごとにモデル用メモリが必要になるため、競合して結果的に翻訳完了が遅くなる場合があります。GPU・メモリの使用率および翻訳が完了するまでの時間を確認しながら調整してください。")
                     }.font(.system(size: 12)).foregroundStyle(.secondary).padding(.top, 8)
                 }
             }
@@ -322,7 +322,7 @@ struct RequestBuilderView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SettingsPage(title: "リクエストを試す", description: "JSONを作成して、このMacのAPIで翻訳を試します。") {
+            SettingsPage(title: "リクエストを試す", description: "ローカルAPIにリクエストするためのJSONを作成し、試すことができます。") {
                 SettingsCard(title: "翻訳する内容", symbol: "1.circle.fill") {
                     Text("原文").font(.system(size: 13, weight: .semibold))
                         .accessibilityAddTraits(.isHeader)
@@ -390,7 +390,7 @@ struct RequestBuilderView: View {
                         .modifier(ReadingSurface(cornerRadius: 12, fill: KotobaTheme.well))
                         .accessibilityLabel("送信するJSON（編集可）")
                         .focused($jsonFocused).disabled(sending)
-                    SettingsFootnote(text: "このJSONをそのまま送信します。言語・文体を省略した場合は「ローカルAPI」画面の既定値を使います。APIキーはヘッダーに付与し、JSONには含めません。", symbol: "info.circle")
+                    SettingsFootnote(text: "言語・文体を省略した場合は「ローカルAPI」画面の既定値を使います。", symbol: "info.circle")
                     if let requestError {
                         Label(requestError, systemImage: "exclamationmark.triangle")
                             .font(.system(size: 12)).foregroundStyle(.red).textSelection(.enabled)
@@ -404,7 +404,7 @@ struct RequestBuilderView: View {
                         Button("応答をコピー", systemImage: "doc.on.doc") { copy(response) }
                     }
                 }
-                SettingsFootnote(text: "テキスト翻訳専用です。userの本文を翻訳し、system/developerは参考情報として扱います。本文・JSON・応答は保存しません。この画面を離れると送信を中止します。", symbol: "info.circle")
+                SettingsFootnote(text: "テキスト翻訳専用です。userの本文を翻訳し、system/developerは参考情報として扱います。この画面を離れると送信を中止します。", symbol: "info.circle")
             }
             Divider()
             HStack(spacing: 16) {
