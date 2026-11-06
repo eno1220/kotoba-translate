@@ -40,6 +40,7 @@ final class Translator: ObservableObject {
     private var articleTask: Task<Void, Never>?
     private var articleRevision = UUID()
     @Published private(set) var inputStatistics = InputStatistics()
+    @Published private(set) var detectedInputLanguage: String?
     @Published var sourcePreview = false
     @Published private(set) var inputFocusRequest: UUID? = UUID()
     @Published var outputPreview = false
@@ -263,15 +264,17 @@ final class Translator: ObservableObject {
             do {
                 try await Task.sleep(for: .milliseconds(150))
                 let statistics = try InputStatistics.measure(text)
-                let initialTarget = detectInitialTarget ? InputLanguage.initialTarget(for: text) : nil
+                let language = InputLanguage.detectedLanguage(for: text)
+                let initialTarget = detectInitialTarget ? language.map { $0 == "ja" ? "en" : "ja" } : nil
                 try Task.checkCancellation()
-                await self?.applyInputStatistics(statistics, initialTarget: initialTarget, revision: revision)
+                await self?.applyInputStatistics(statistics, language: language, initialTarget: initialTarget, revision: revision)
             } catch { /* Replaced by more recent input. */ }
         }
     }
 
-    private func applyInputStatistics(_ statistics: InputStatistics, initialTarget: String?, revision: UUID) {
+    private func applyInputStatistics(_ statistics: InputStatistics, language: String?, initialTarget: String?, revision: UUID) {
         guard revision == statisticsRevision else { return }
+        detectedInputLanguage = language
         inputStatistics = statistics
         chooseInitialTarget(initialTarget)
     }

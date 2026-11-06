@@ -45,7 +45,7 @@ struct KotobaTranslateApp: App {
         .windowToolbarStyle(.unifiedCompact)
         Settings { PreferencesView(preferences: preferences) }
             .windowToolbarStyle(.unifiedCompact)
-        MenuBarExtra(isInserted: .constant(server.running || server.starting)) {
+        MenuBarExtra {
             ServerStatusMenu(server: server)
         } label: {
             Image(nsImage: Self.menuBarIcon)
@@ -64,8 +64,6 @@ private struct ServerStatusMenu: View {
             Text("Kotoba Translate")
             Label(server.running ? "ローカルAPI：受付中" : server.starting ? "ローカルAPI：起動中" : "ローカルAPI：停止中",
                   systemImage: "network")
-            ServerRequestStatus(pool: server.inference)
-            Text("完了 \(server.completed)件")
             Divider()
             Button("翻訳画面を開く", systemImage: "macwindow") { showWindow("translate") }
             Button("ローカルAPI設定を開く…", systemImage: "slider.horizontal.3") { showWindow("server") }
@@ -75,8 +73,14 @@ private struct ServerStatusMenu: View {
             }
             .help(server.baseURL)
             Divider()
-            Button(server.starting ? "起動を中止" : "サーバーを停止", systemImage: "stop.circle", action: server.stop)
-                .disabled(!server.running && !server.starting)
+            Toggle("サーバーモード", isOn: Binding(
+                get: { server.running || server.starting },
+                set: { if $0 { server.start() } else { server.stop() } }
+            ))
+            if let error = server.error {
+                Text(error)
+                Button("サーバー設定を確認…") { showWindow("server") }
+            }
             Divider()
             Button("Kotoba Translateを終了", systemImage: "power") { NSApp.terminate(nil) }
                 .keyboardShortcut("q")
@@ -87,13 +91,5 @@ private struct ServerStatusMenu: View {
     private func showWindow(_ id: String) {
         openWindow(id: id)
         NSApp.activate(ignoringOtherApps: true)
-    }
-}
-
-private struct ServerRequestStatus: View {
-    @ObservedObject var pool: ServerInferencePool
-
-    var body: some View {
-        Text("実行中 \(pool.activeCount)件 · 待機中 \(pool.waitingCount)件")
     }
 }

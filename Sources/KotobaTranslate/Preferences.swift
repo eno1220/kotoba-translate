@@ -27,6 +27,18 @@ struct EditorColor: Codable, Equatable {
     }
 }
 
+struct EditorFont: Codable, Equatable {
+    var family = ""
+    var size: Double = 16
+    var face = ""
+
+    @MainActor var native: NSFont {
+        let size = min(40, max(10, size))
+        let name = FontCatalog.selectedFace(family: family, name: face)?.id
+        return name.flatMap { NSFont(name: $0, size: size) } ?? .systemFont(ofSize: size)
+    }
+}
+
 @MainActor
 final class Preferences: ObservableObject {
     @Published var customPresets: [ContextPreset] { didSet { saveEncoded(customPresets, forKey: "customPresets") } }
@@ -62,34 +74,18 @@ final class Preferences: ObservableObject {
     @Published var python: String { didSet { UserDefaults.standard.set(python, forKey: "python") } }
     @Published var unloadSeconds: Int { didSet { UserDefaults.standard.set(unloadSeconds, forKey: "unloadSeconds") } }
     @Published var autoSplit: Bool { didSet { UserDefaults.standard.set(autoSplit, forKey: "autoSplit") } }
-    @Published var sourceFontFamily: String { didSet {
-        sourceFontFace = ""
-        UserDefaults.standard.set(sourceFontFamily, forKey: "sourceFontFamily")
-    } }
-    @Published var sourceFontSize: Double { didSet { UserDefaults.standard.set(sourceFontSize, forKey: "sourceFontSize") } }
-    @Published var outputFontFamily: String { didSet {
-        outputFontFace = ""
-        UserDefaults.standard.set(outputFontFamily, forKey: "outputFontFamily")
-    } }
-    @Published var outputFontSize: Double { didSet { UserDefaults.standard.set(outputFontSize, forKey: "outputFontSize") } }
-    @Published var sourceFontFace: String { didSet { UserDefaults.standard.set(sourceFontFace, forKey: "sourceFontFace") } }
-    @Published var outputFontFace: String { didSet { UserDefaults.standard.set(outputFontFace, forKey: "outputFontFace") } }
-    @Published var sourceTextColor: EditorColor? { didSet { saveEncoded(sourceTextColor, forKey: "sourceTextColor") } }
-    @Published var outputTextColor: EditorColor? { didSet { saveEncoded(outputTextColor, forKey: "outputTextColor") } }
+    @Published var defaultFont: EditorFont { didSet { saveEncoded(defaultFont, forKey: "defaultFont") } }
+    @Published var languageFonts: [String: EditorFont] { didSet { saveEncoded(languageFonts, forKey: "languageFonts") } }
+    @Published var codeFont: EditorFont { didSet { saveEncoded(codeFont, forKey: "codeFont") } }
+    @Published var textColor: EditorColor? { didSet { saveEncoded(textColor, forKey: "textColor") } }
 
     var preferredModelID: UUID? {
         models.first(where: { $0.id == defaultModelID })?.id ?? models.first?.id
     }
-    var sourceFont: NSFont { editorFont(family: sourceFontFamily, size: sourceFontSize, face: sourceFontFace) }
-    var outputFont: NSFont { editorFont(family: outputFontFamily, size: outputFontSize, face: outputFontFace) }
-    var sourceColor: NSColor { sourceTextColor?.native ?? .textColor }
-    var outputColor: NSColor { outputTextColor?.native ?? .textColor }
-
-    private func editorFont(family: String, size: Double, face: String) -> NSFont {
-        let size = min(40, max(10, size))
-        let name = FontCatalog.selectedFace(family: family, name: face)?.id
-        return name.flatMap { NSFont(name: $0, size: size) } ?? .systemFont(ofSize: size)
+    func font(for language: String) -> NSFont {
+        (languageFonts[language] ?? defaultFont).native
     }
+    var editorColor: NSColor { textColor?.native ?? .textColor }
 
     init() {
         let defaults = UserDefaults.standard
@@ -103,14 +99,19 @@ final class Preferences: ObservableObject {
         python = defaults.string(forKey: "python") ?? bundledPath ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".venv/bin/python").path
         unloadSeconds = defaults.object(forKey: "unloadSeconds") as? Int ?? 300
         autoSplit = defaults.object(forKey: "autoSplit") as? Bool ?? true
-        sourceFontFamily = defaults.string(forKey: "sourceFontFamily") ?? ""
-        sourceFontSize = defaults.object(forKey: "sourceFontSize") as? Double ?? 16
-        outputFontFamily = defaults.string(forKey: "outputFontFamily") ?? ""
-        outputFontSize = defaults.object(forKey: "outputFontSize") as? Double ?? 16
-        sourceFontFace = defaults.string(forKey: "sourceFontFace") ?? ""
-        outputFontFace = defaults.string(forKey: "outputFontFace") ?? ""
-        sourceTextColor = defaults.data(forKey: "sourceTextColor").flatMap { try? JSONDecoder().decode(EditorColor.self, from: $0) }
-        outputTextColor = defaults.data(forKey: "outputTextColor").flatMap { try? JSONDecoder().decode(EditorColor.self, from: $0) }
+        // Keep the former source appearance as the shared default on upgrade.
+        defaultFont = defaults.data(forKey: "defaultFont").flatMap { try? JSONDecoder().decode(EditorFont.self, from: $0) }
+            ?? EditorFont(family: defaults.string(forKey: "sourceFontFamily") ?? "",
+                          size: defaults.object(forKey: "sourceFontSize") as? Double ?? 16,
+                          face: defaults.string(forKey: "sourceFontFace") ?? "")
+        languageFonts = defaults.data(forKey: "languageFonts").flatMap { try? JSONDecoder().decode([String: EditorFont].self, from: $0) } ?? [:]
+        codeFont = defaults.data(forKey: "codeFont").flatMap { try? JSONDecoder().decode(EditorFont.self, from: $0) }
+            ?? EditorFont(family: NSFont.monospacedSystemFont(ofSize: 16, weight: .regular).familyName ?? "", size: 16)
+        textColor = defaults.data(forKey: defaults.object(forKey: "textColor") == nil ? "sourceTextColor" : "textColor")
+            .flatMap { try? JSONDecoder().decode(EditorColor.self, from: $0) }
+        saveEncoded(defaultFont, forKey: "defaultFont")
+        saveEncoded(textColor, forKey: "textColor")
+        defaults.removeObject(forKey: "sourceTextColor")
         if !models.contains(where: { $0.id == defaultModelID }) { defaultModelID = nil }
     }
 
@@ -148,6 +149,7 @@ struct Language: Identifiable {
 struct PreferencesView: View {
     @ObservedObject var preferences: Preferences
     private static let fontFamilies = NSFontManager.shared.availableFontFamilies.sorted()
+    @State private var fontLanguage = "ja"
     @State private var selection: SettingsSection? = .general
 
     private enum SettingsSection: String, CaseIterable, Identifiable {
@@ -173,7 +175,7 @@ struct PreferencesView: View {
             switch self {
             case .general: "モデルと実行環境を管理します。"
             case .presets: "よく使う場面や背景を、翻訳に適用できます。"
-            case .typography: "原文と訳文、それぞれの読みやすさを調整します。"
+            case .typography: "言語ごとのフォントと、共通の文字色を調整します。"
             case .glossary: "すべての翻訳で使う、原語と訳語の対応を登録します。"
             }
         }
@@ -203,12 +205,7 @@ struct PreferencesView: View {
                 case .presets:
                     PresetSettingsView(preferences: preferences)
                 case .typography:
-                    SettingsPage {
-                        fontSection("原文", family: $preferences.sourceFontFamily, size: $preferences.sourceFontSize,
-                                    face: $preferences.sourceFontFace, color: $preferences.sourceTextColor, font: preferences.sourceFont)
-                        fontSection("訳文", family: $preferences.outputFontFamily, size: $preferences.outputFontSize,
-                                    face: $preferences.outputFontFace, color: $preferences.outputTextColor, font: preferences.outputFont)
-                    }
+                    typographySettings
                 case .glossary:
                     glossarySettings
                 }
@@ -344,9 +341,48 @@ struct PreferencesView: View {
         }
     }
 
-    private func fontSection(_ title: String, family: Binding<String>, size: Binding<Double>,
-                             face: Binding<String>, color: Binding<EditorColor?>, font: NSFont) -> some View {
-        SettingsCard(title: title) {
+    private var typographySettings: some View {
+        SettingsPage {
+            SettingsCard(title: "文字色") {
+                SettingsRow("すべての言語に共通") {
+                    ColorPicker("文字色", selection: Binding(
+                        get: { Color(nsColor: preferences.editorColor) },
+                        set: { preferences.textColor = EditorColor($0) }
+                    ), supportsOpacity: false)
+                    Button("リセット") { preferences.textColor = nil }.disabled(preferences.textColor == nil)
+                }
+            }
+            fontSection("既定のフォント", font: $preferences.defaultFont)
+            SettingsCard(title: "言語別のフォント") {
+                SettingsRow("言語") {
+                    Picker("言語", selection: $fontLanguage) {
+                        ForEach(Language.all) { Text($0.name).tag($0.id) }
+                    }.pickerStyle(.menu).frame(maxWidth: 280)
+                }
+                Toggle("この言語のフォントを指定", isOn: Binding(
+                    get: { preferences.languageFonts[fontLanguage] != nil },
+                    set: { preferences.languageFonts[fontLanguage] = $0 ? preferences.defaultFont : nil }
+                ))
+                Text("指定のない言語や、原文の言語を判定できない場合は既定のフォントを使います。原文・訳文に共通です。")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            if preferences.languageFonts[fontLanguage] != nil {
+                fontSection(Language.all.first { $0.id == fontLanguage }?.name ?? fontLanguage, font: Binding(
+                    get: { preferences.languageFonts[fontLanguage] ?? preferences.defaultFont },
+                    set: { preferences.languageFonts[fontLanguage] = $0 }
+                ))
+            }
+            fontSection("コード用フォント", font: $preferences.codeFont)
+            Text("コード用フォントはMarkdownプレビューのコードブロックとインラインコードに適用します。")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
+    private func fontSection(_ title: String, font: Binding<EditorFont>) -> some View {
+        let family = Binding(get: { font.wrappedValue.family }, set: {
+            font.wrappedValue = EditorFont(family: $0, size: font.wrappedValue.size)
+        })
+        return SettingsCard(title: title) {
             SettingsRow("フォント") {
                 Picker("フォント", selection: family) {
                     Text("システム").tag("")
@@ -356,8 +392,8 @@ struct PreferencesView: View {
             Divider()
             SettingsRow("書体") {
                 Picker("書体", selection: Binding(
-                    get: { FontCatalog.selectedFace(family: family.wrappedValue, name: face.wrappedValue)?.id ?? "" },
-                    set: { face.wrappedValue = $0 }
+                    get: { FontCatalog.selectedFace(family: family.wrappedValue, name: font.wrappedValue.face)?.id ?? "" },
+                    set: { font.wrappedValue.face = $0 }
                 )) {
                     ForEach(FontCatalog.faces(for: family.wrappedValue)) { Text($0.label).tag($0.id) }
                 }
@@ -366,21 +402,13 @@ struct PreferencesView: View {
             }
             Divider()
             SettingsRow("サイズ") {
-                Stepper(value: size, in: 10...40, step: 1) {
-                    Text("\(Int(size.wrappedValue)) pt").monospacedDigit().frame(width: 54)
+                Stepper(value: font.size, in: 10...40, step: 1) {
+                    Text("\(Int(font.wrappedValue.size)) pt").monospacedDigit().frame(width: 54)
                 }.labelsHidden().accessibilityLabel("\(title)の文字サイズ")
-                Text("\(Int(size.wrappedValue)) pt").monospacedDigit().frame(width: 54)
+                Text("\(Int(font.wrappedValue.size)) pt").monospacedDigit().frame(width: 54)
             }
-            Divider()
-            SettingsRow("文字色") {
-                ColorPicker("文字色", selection: Binding(
-                    get: { Color(nsColor: color.wrappedValue?.native ?? .textColor) },
-                    set: { color.wrappedValue = EditorColor($0) }
-                ), supportsOpacity: false)
-                Button("リセット") { color.wrappedValue = nil }.disabled(color.wrappedValue == nil)
-            }
-            Text("あいうえお 漢字 ABC abc 123").font(Font(font))
-                .foregroundStyle(Color(nsColor: color.wrappedValue?.native ?? .textColor))
+            Text("あいうえお 漢字 ABC abc 123").font(Font(font.wrappedValue.native))
+                .foregroundStyle(Color(nsColor: preferences.editorColor))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(18)
                 .modifier(ReadingSurface(cornerRadius: 12))

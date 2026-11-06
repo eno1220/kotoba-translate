@@ -84,7 +84,7 @@ struct ServerView: View {
                     SettingsIcon(symbol: "network", size: 36)
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Kotoba Translate API").font(.system(size: 17, weight: .semibold))
-                        Text(server.running ? "受付中 · 完了 \(server.completed)件" : server.starting ? "起動中" : "停止中")
+                        Text(server.running ? "受付中" : server.starting ? "起動中" : "停止中")
                             .foregroundStyle(.secondary).monospacedDigit()
                     }
                     Spacer()

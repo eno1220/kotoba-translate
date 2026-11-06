@@ -94,6 +94,10 @@ struct ContentView: View {
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
     }
 
+    private var sourceFont: NSFont {
+        preferences.font(for: translator.source.isEmpty ? translator.detectedInputLanguage ?? "" : translator.source)
+    }
+
     private var sourcePane: some View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
@@ -106,10 +110,10 @@ struct ContentView: View {
             .buttonStyle(.borderless)
             .padding(.horizontal, 18).padding(.top, 12)
             if translator.sourcePreview {
-                markdownPreview(translator.input, font: preferences.sourceFont, color: preferences.sourceColor)
+                markdownPreview(translator.input, font: sourceFont, color: preferences.editorColor)
             } else {
-                InputEditor(text: $translator.input, font: preferences.sourceFont,
-                            textColor: preferences.sourceColor, focusRequest: translator.inputFocusRequest,
+                InputEditor(text: $translator.input, font: sourceFont,
+                            textColor: preferences.editorColor, focusRequest: translator.inputFocusRequest,
                             placeholder: "テキストを入力またはペースト", accessibilityName: "翻訳するテキスト",
                             submit: translator.translate)
             }
@@ -205,10 +209,10 @@ struct ContentView: View {
             .buttonStyle(.borderless)
             .padding(.horizontal, 18).padding(.top, 12)
             if translator.outputPreview {
-                markdownPreview(translator.output, font: preferences.outputFont, color: preferences.outputColor)
+                markdownPreview(translator.output, font: preferences.font(for: translator.target), color: preferences.editorColor)
             } else {
-                InputEditor(text: .constant(translator.output), editable: false, font: preferences.outputFont,
-                            textColor: preferences.outputColor, placeholder: "翻訳結果がここに表示されます",
+                InputEditor(text: .constant(translator.output), editable: false, font: preferences.font(for: translator.target),
+                            textColor: preferences.editorColor, placeholder: "翻訳結果がここに表示されます",
                             accessibilityName: "翻訳結果")
             }
             HStack {
@@ -381,7 +385,8 @@ struct ContentView: View {
 
     private func markdownPreview(_ text: String, font: NSFont, color: NSColor) -> some View {
         MarkdownPreview(text: text, fontName: font.fontName, fontSize: font.pointSize,
-                        color: Color(nsColor: color))
+                        color: Color(nsColor: color), codeFontName: preferences.codeFont.native.fontName,
+                        codeFontSize: preferences.codeFont.native.pointSize)
             .equatable()
     }
 
@@ -419,6 +424,8 @@ private struct MarkdownPreview: View, Equatable {
     let fontName: String
     let fontSize: CGFloat
     let color: Color
+    let codeFontName: String
+    let codeFontSize: CGFloat
 
     var body: some View {
         ScrollView {
@@ -429,11 +436,20 @@ private struct MarkdownPreview: View, Equatable {
                     FontSize(fontSize)
                     ForegroundColor(color)
                 }
+                .markdownTextStyle(\.code) {
+                    FontFamily(.custom(codeFontName))
+                    FontFamilyVariant(.normal)
+                    FontSize(codeFontSize)
+                }
                 .markdownTextStyle(\.link) { ForegroundColor(.accentColor) }
                 .markdownBlockStyle(\.codeBlock) { configuration in
                     ScrollView(.horizontal) {
                         configuration.label
-                            .markdownTextStyle { FontFamilyVariant(.monospaced) }
+                            .markdownTextStyle {
+                                FontFamily(.custom(codeFontName))
+                                FontFamilyVariant(.normal)
+                                FontSize(codeFontSize)
+                            }
                             .fixedSize(horizontal: true, vertical: false)
                             .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)

@@ -14,7 +14,6 @@ final class LocalAPIServer: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var starting = false
     @Published private(set) var error: String?
-    @Published private(set) var completed = 0
     @Published private(set) var lastTimings: [String: Double] = [:]
     private var listener: NWListener?
     private var peers: [UUID: HTTPPeer] = [:]
@@ -151,7 +150,6 @@ final class LocalAPIServer: ObservableObject {
                 if streaming { peer?.event(chunk(["content": text])) }
             }
             try Task.checkCancellation()
-            completed += 1
             let finish = metrics.finish_reason == "length" ? "length" : "stop"
             let usage = ["prompt_tokens": metrics.prompt_tokens ?? 0, "completion_tokens": metrics.tokens ?? 0,
                          "total_tokens": (metrics.prompt_tokens ?? 0) + (metrics.tokens ?? 0)]
