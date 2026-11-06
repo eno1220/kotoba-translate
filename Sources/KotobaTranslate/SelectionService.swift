@@ -56,7 +56,7 @@ final class SelectionService: NSObject {
         // where macOS has already brought this app to the foreground.
         rememberSource(NSWorkspace.shared.frontmostApplication)
         translator.applyAppPreset(bundleID: lastSourceBundleID)
-        translator.importSelection(text)
+        translator.translateSelection(text)
         showWindow?()
         NSApp.activate(ignoringOtherApps: true)
     }

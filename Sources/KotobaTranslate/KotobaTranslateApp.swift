@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct KotobaTranslateApp: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var appDelegate
+    @StateObject private var savedTranslations = SavedTranslationStore()
     @StateObject private var preferences: Preferences
     @StateObject private var translator: Translator
     @StateObject private var server: LocalAPIServer
@@ -31,7 +32,7 @@ struct KotobaTranslateApp: App {
 
     var body: some Scene {
         Window("Kotoba Translate", id: "translate") {
-            ContentView(preferences: preferences, translator: translator, selectionService: appDelegate.selectionService)
+            ContentView(preferences: preferences, translator: translator, savedTranslations: savedTranslations, selectionService: appDelegate.selectionService)
                 .preferredColorScheme(.light)
                 .onAppear {
                     NSApplication.shared.activate(ignoringOtherApps: true)
@@ -39,6 +40,11 @@ struct KotobaTranslateApp: App {
         }
         .defaultSize(width: 1180, height: 780)
         .windowToolbarStyle(.unified)
+        Window("保存した翻訳", id: "saved-translations") {
+            SavedTranslationsView(store: savedTranslations, preferences: preferences)
+                .preferredColorScheme(.light)
+        }
+        .defaultSize(width: 1040, height: 700)
         Settings {
             PreferencesView(preferences: preferences, server: server, translator: translator,
                             selection: $settingsSelection)

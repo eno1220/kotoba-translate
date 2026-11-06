@@ -12,9 +12,10 @@ struct ContentView: View {
     @FocusState private var articleURLFocused: Bool
     @ObservedObject var preferences: Preferences
     @ObservedObject var translator: Translator
+    @ObservedObject var savedTranslations: SavedTranslationStore
     var selectionService: SelectionService?
 
-    var body: some View {
+    private var translationScreen: some View {
         ZStack {
             ScreenBackground(fill: KotobaTheme.mainCanvas)
             VStack(spacing: 12) {
@@ -35,12 +36,21 @@ struct ContentView: View {
             .padding(18)
         }
         .frame(minWidth: 940, minHeight: 600)
+    }
+
+    var body: some View {
+        translationScreen
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: translator.optionsExpanded)
         .onAppear {
             selectionService?.showWindow = { openWindow(id: "translate") }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button { openWindow(id: "saved-translations") } label: {
+                    Label("保存した翻訳", systemImage: "bookmark")
+                }
+                .keyboardShortcut("b", modifiers: [.command, .option])
+                .help("保存した翻訳（⌥⌘B）")
                 Toggle(isOn: $translator.optionsExpanded) {
                     Label("翻訳オプション", systemImage: "sidebar.right")
                 }
@@ -70,6 +80,9 @@ struct ContentView: View {
                     pdfEndPage = "1"
                 }
         }
+        .alert("翻訳の保存エラー", isPresented: Binding(get: { savedTranslations.error != nil }, set: { if !$0 { savedTranslations.error = nil } })) {
+            Button("OK") { savedTranslations.error = nil }
+        } message: { Text(savedTranslations.error ?? "") }
         .alert("保存エラー", isPresented: Binding(get: { translator.exportError != nil }, set: { if !$0 { translator.exportError = nil } })) {
             Button("OK") { translator.exportError = nil }
         } message: { Text(translator.exportError ?? "") }
@@ -262,6 +275,16 @@ struct ContentView: View {
                         .help("日本語の文体")
                 }
                 previewButton("訳文", isOn: $translator.outputPreview)
+                Button {
+                    if let entry = translator.completedTranslation { savedTranslations.save(entry) }
+                } label: {
+                    let saved = translator.completedTranslation.map { savedTranslations.contains($0) } ?? false
+                    toolIcon(saved ? "保存済み" : "翻訳を保存", symbol: saved ? "bookmark.fill" : "bookmark")
+                }
+                .disabled(translator.completedTranslation == nil || translator.busy || savedTranslations.working
+                          || !savedTranslations.ready
+                          || (translator.completedTranslation.map { savedTranslations.contains($0) } ?? false))
+                .help("翻訳に使った原文と訳文をアプリ内に保存")
                 Button(action: translator.saveOutput) {
                     toolIcon("訳文を保存", symbol: "square.and.arrow.down")
                 }

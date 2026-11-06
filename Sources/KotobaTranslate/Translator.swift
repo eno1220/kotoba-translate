@@ -48,6 +48,8 @@ final class Translator: ObservableObject {
     @Published var sourcePreview = false
     @Published private(set) var inputFocusRequest: UUID? = UUID()
     @Published var outputPreview = false
+    @Published private(set) var completedTranslation: SavedTranslation?
+    private var activeUIRequest: TranslationRequest?
     @Published var output = ""
     @Published var modelID: UUID?
     @Published var source = ""
@@ -136,12 +138,26 @@ final class Translator: ObservableObject {
         sourcePreview = false
         input = text
         output = ""
+        completedTranslation = nil
+        activeUIRequest = nil
         metrics = nil
         progress = nil
         status = ""
         recoveryStatus = ""
         translationCompleted = false
         inputFocusRequest = UUID()
+    }
+
+    func translateSelection(_ text: String) {
+        importSelection(text)
+        guard canTranslate else {
+            optionsExpanded = true
+            error = modelID == nil || !preferences.models.contains(where: { $0.id == modelID })
+                ? "翻訳オプションでモデルを登録・選択してください。"
+                : "翻訳オプションの最大トークン数とTemperatureを確認してください。"
+            return
+        }
+        translate()
     }
 
     func focusInput() {
@@ -340,6 +356,7 @@ final class Translator: ObservableObject {
             glossary: terms.map { ["source": $0.source, "target": $0.target] },
             max_tokens: maxTokens, temperature: temperature, auto_split: preferences.autoSplit)
         output = ""
+        activeUIRequest = request
         begin(request)
     }
 
@@ -383,6 +400,7 @@ final class Translator: ObservableObject {
         chunkLabel = ""
         recoveryStatus = ""
         translationCompleted = false
+        completedTranslation = nil
         status = "モデルを読み込み中"
         do {
             if loadedPath != request.model || pythonPath != preferences.python || process?.isRunning != true {
@@ -404,6 +422,7 @@ final class Translator: ObservableObject {
     }
 
     private func fail(_ failure: Error) {
+        activeUIRequest = nil
         if servingAPI { finishAPI(.failure(failure)) }
         else { error = failure.localizedDescription }
         busy = false
@@ -531,6 +550,11 @@ final class Translator: ObservableObject {
             if let retries = event.retries, retries > 0 {
                 recoveryStatus = "再分割・再試行\(retries)回で完了"
             }
+            if !servingAPI, translationCompleted, !output.isEmpty, let request = activeUIRequest {
+                completedTranslation = SavedTranslation(sourceText: request.text, translatedText: output,
+                    sourceLanguage: request.source, targetLanguage: request.target)
+            }
+            activeUIRequest = nil
             if servingAPI { finishAPI(.success((apiOutput, event))) }
             scheduleUnload(seconds: idleSecondsOverride ?? preferences.unloadSeconds)
         case "error":
@@ -549,6 +573,7 @@ final class Translator: ObservableObject {
     }
 
     func cancel() {
+        activeUIRequest = nil
         if servingAPI { finishAPI(.failure(CancellationError())) }
         stopProcess()
         busy = false

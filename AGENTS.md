@@ -12,7 +12,7 @@
 - Expose max tokens and temperature; enforce input tokens + generation limit <= 32,768.
 - Load only when translation starts. Reuse the model until configurable idle unloading; terminate the worker on cancellation, unloading, or app exit.
 - Keep input/actions responsive. Stream output and show available progress, elapsed time, token counts, and generation speed.
-- No history. Persist preferences, model registrations, and glossary only; do not save source text, translations, or context.
+- No automatic history. Persist source text and translations only when the user explicitly bookmarks a completed translation; support saved titles, timestamps, and management. Never persist context. Preferences, model registrations, and glossary are also persisted.
 
 ## UI requirements
 - Follow Apple HIG: simple native controls, clear layout, minimal functional wording, light mode only, and the OS accent color. Green indicates model loading/loaded status.

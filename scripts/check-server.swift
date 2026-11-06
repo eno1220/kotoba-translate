@@ -79,8 +79,10 @@ struct ServerCheck {
         preferences.autoSplit = true
         let draftEngine = Translator(preferences: preferences)
         try require(draftEngine.maxTokens == 4096, "editor defaults to 4096 tokens")
-        draftEngine.input = "draft"
-        draftEngine.translate()
+        draftEngine.translateSelection("draft")
+        try require(draftEngine.busy, "service input immediately starts translation")
+        draftEngine.input = "edited while translating"
+        draftEngine.target = "en"
         var sawRecovery = false
         for _ in 0..<200 {
             if draftEngine.busy && draftEngine.recoveryStatus.contains("繰り返しを検出") { sawRecovery = true }
@@ -92,6 +94,12 @@ struct ServerCheck {
         try require(sawRecovery, "retry reason and action remain visible while busy")
         try require(draftEngine.translationCompleted && draftEngine.status == "翻訳完了", "successful translation has an explicit completion state")
         try require(draftEngine.recoveryStatus == "再分割・再試行1回で完了", "completion retains retry count")
+        try require(draftEngine.completedTranslation?.sourceText == "draft"
+                    && draftEngine.completedTranslation?.translatedText == draftEngine.output
+                    && draftEngine.completedTranslation?.targetLanguage == "ja",
+                    "bookmark snapshot keeps the actual request and final committed output despite editor changes")
+        draftEngine.importSelection("replacement")
+        try require(draftEngine.completedTranslation == nil && !draftEngine.busy, "plain import clears the snapshot without translating")
         draftEngine.unload()
         let engine = Translator(preferences: preferences)
         try await checkPresetsAndFiles(preferences, engine: engine, directory: directory)
