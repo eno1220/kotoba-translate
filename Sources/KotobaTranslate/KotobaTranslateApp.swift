@@ -51,119 +51,42 @@ struct KotobaTranslateApp: App {
             Image(nsImage: Self.menuBarIcon)
                 .accessibilityLabel("Kotoba Translate")
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
     }
 }
 
 private struct ServerStatusMenu: View {
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
     @ObservedObject var server: LocalAPIServer
 
     var body: some View {
-        VStack(spacing: 6) {
-            Menu {
-                Menu("接続情報") {
-                    Text(server.baseURL)
-                    Button("Base URLをコピー") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(server.baseURL, forType: .string)
-                    }
-                }
-                Menu("処理状況") {
-                    ServerRequestStatus(pool: server.inference)
-                    Text("完了 \(server.completed)件")
-                }
-                Divider()
-                Button("ローカルAPI設定を開く…") { showWindow("server") }
-                Button(server.starting ? "起動を中止" : "サーバーを停止") {
-                    dismiss()
-                    server.stop()
-                }
-            } label: {
-                HStack(spacing: 12) {
-                    Image(nsImage: NSApp.applicationIconImage)
-                        .resizable()
-                        .frame(width: 48, height: 48)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Kotoba Translate")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.primary)
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(server.running ? Color.green : Color.secondary)
-                                .frame(width: 8, height: 8)
-                                .accessibilityHidden(true)
-                            Text(server.running ? "API 受付中" : server.starting ? "API 起動中" : "API 停止中")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .foregroundStyle(server.running ? Color.green : Color.secondary)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(server.running ? Color.green.opacity(0.1) : Color.secondary.opacity(0.08), in: Capsule())
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                        .accessibilityHidden(true)
-                }
-                .padding(10)
-                .contentShape(Rectangle())
+        Group {
+            Text("Kotoba Translate")
+            Label(server.running ? "ローカルAPI：受付中" : server.starting ? "ローカルAPI：起動中" : "ローカルAPI：停止中",
+                  systemImage: "network")
+            ServerRequestStatus(pool: server.inference)
+            Text("完了 \(server.completed)件")
+            Divider()
+            Button("翻訳画面を開く", systemImage: "macwindow") { showWindow("translate") }
+            Button("ローカルAPI設定を開く…", systemImage: "slider.horizontal.3") { showWindow("server") }
+            Button("Base URLをコピー", systemImage: "doc.on.doc") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(server.baseURL, forType: .string)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .buttonStyle(MenuBarRowStyle())
-            .accessibilityLabel("Kotoba Translate、\(server.running ? "API受付中" : server.starting ? "API起動中" : "API停止中")、詳細メニュー")
-
-            Divider().padding(.horizontal, 10)
-            Button { showWindow("translate") } label: {
-                Label("翻訳画面を開く", systemImage: "macwindow")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-            }
-            .buttonStyle(MenuBarRowStyle())
-            Divider().padding(.horizontal, 10)
-            Button { NSApp.terminate(nil) } label: {
-                HStack {
-                    Text("Kotoba Translateを終了")
-                    Spacer()
-                    Text("⌘Q").foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 12).padding(.vertical, 8)
-            }
-            .buttonStyle(MenuBarRowStyle())
-            .keyboardShortcut("q")
+            .help(server.baseURL)
+            Divider()
+            Button(server.starting ? "起動を中止" : "サーバーを停止", systemImage: "stop.circle", action: server.stop)
+                .disabled(!server.running && !server.starting)
+            Divider()
+            Button("Kotoba Translateを終了", systemImage: "power") { NSApp.terminate(nil) }
+                .keyboardShortcut("q")
         }
-        .padding(6)
-        .frame(width: 320)
         .preferredColorScheme(.light)
     }
 
     private func showWindow(_ id: String) {
-        dismiss()
         openWindow(id: id)
         NSApp.activate(ignoringOtherApps: true)
-    }
-}
-
-private struct MenuBarRowStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        Row(configuration: configuration)
-    }
-
-    private struct Row: View {
-        let configuration: ButtonStyleConfiguration
-        @State private var hovering = false
-
-        var body: some View {
-            configuration.label
-                .background(Color.primary.opacity(configuration.isPressed ? 0.1 : hovering ? 0.05 : 0),
-                            in: RoundedRectangle(cornerRadius: 8))
-                .contentShape(RoundedRectangle(cornerRadius: 8))
-                .onHover { hovering = $0 }
-        }
     }
 }
 
@@ -171,6 +94,6 @@ private struct ServerRequestStatus: View {
     @ObservedObject var pool: ServerInferencePool
 
     var body: some View {
-        Text("実行 \(pool.activeCount)件 · 待機 \(pool.waitingCount)件")
+        Text("実行中 \(pool.activeCount)件 · 待機中 \(pool.waitingCount)件")
     }
 }

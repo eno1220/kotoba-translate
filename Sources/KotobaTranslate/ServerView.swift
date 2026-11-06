@@ -181,53 +181,79 @@ struct ServerView: View {
     }
 
     private var sharedModelSettings: some View {
-        SettingsCard(title: "共有モデル") {
-            HStack(spacing: 8) {
-                if translator.busy || translator.loaded {
-                    Circle().fill(.green).frame(width: 8, height: 8).accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 18) {
+            SettingsCard(title: "共有モデル") {
+                SettingsRow("状態") {
+                    HStack(spacing: 7) {
+                        Circle().fill(translator.busy || translator.loaded ? Color.green : Color.secondary)
+                            .frame(width: 8, height: 8).accessibilityHidden(true)
+                        Text(translator.busy ? (translator.servingAPI ? "API: " : "翻訳画面: ") + translator.status : translator.loaded ? "読み込み済み" : "未読み込み")
+                    }
                 }
-                Text(translator.busy ? (translator.servingAPI ? "API: " : "翻訳画面: ") + translator.status : translator.loaded ? "読み込み済み" : "未読み込み")
-                Spacer()
-                if translator.busy && translator.servingAPI { Button("翻訳を中止", action: translator.cancel) }
-                Button("解放", systemImage: "eject", action: translator.unload)
-                    .disabled(!translator.loaded || translator.busy).help("モデルをメモリから解放")
-            }
-            Divider()
-            SettingsRow("自動解放") {
-                Picker("自動解放", selection: $preferences.unloadSeconds) {
-                    Text("完了後すぐ").tag(0); Text("1分後").tag(60); Text("5分後").tag(300)
-                    Text("15分後").tag(900); Text("30分後").tag(1800); Text("アプリ終了時").tag(-1)
-                }.pickerStyle(.menu).frame(width: 160)
-            }
-            if translator.busy, let startedAt = translator.startedAt {
-                TimelineView(.periodic(from: .now, by: 1)) { clock in
-                    Text("経過 \(Int(max(0, clock.date.timeIntervalSince(startedAt))))秒")
-                        .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                if let path = translator.loadedModelPath,
+                   let model = preferences.models.first(where: { $0.path == path }) {
+                    SettingsRow("モデル") { Text(model.tag).textSelection(.enabled) }
                 }
+                Divider()
+                SettingsRow("自動解放") {
+                    Picker("自動解放", selection: $preferences.unloadSeconds) {
+                        Text("完了後すぐ").tag(0); Text("1分後").tag(60); Text("5分後").tag(300)
+                        Text("15分後").tag(900); Text("30分後").tag(1800); Text("アプリ終了時").tag(-1)
+                    }.pickerStyle(.menu).frame(width: 160)
+                }
+                SettingsRow("モデルの操作") {
+                    Button("モデルを解放", systemImage: "eject", action: translator.unload)
+                        .disabled(!translator.loaded || translator.busy).help("共有モデルをメモリから解放")
+                    if translator.busy && translator.servingAPI {
+                        Button("翻訳を中止", action: translator.cancel)
+                    }
+                }
+                Text("翻訳画面とAPIで共有します。混雑時に追加したモデルは30秒後に解放し、最後の1つには上の自動解放設定を使います。")
+                    .font(.callout).foregroundStyle(.secondary)
             }
-            if let metrics = translator.metrics {
-                HStack(spacing: 12) {
-                    Text("直近の翻訳")
-                    if let tokens = metrics.tokens { Text("\(tokens) tokens") }
-                    if let tps = metrics.tps { Text(String(format: "%.1f token/s", tps)) }
-                    if let elapsed = metrics.elapsed { Text(String(format: "%.2f秒", elapsed)) }
-                }.font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-            }
-            if !server.lastTimings.isEmpty {
-                DisclosureGroup("直近のAPIリクエスト") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach([("total_seconds", "合計"), ("queue_seconds", "待機"),
-                                 ("first_content_seconds", "最初の訳文まで"), ("load_seconds", "読み込み"),
-                                 ("prompt_seconds", "入力処理"), ("generation_seconds", "生成")], id: \.0) { key, label in
-                            if let seconds = server.lastTimings[key] { Text(String(format: "%@ %.2f秒", label, seconds)) }
+            if translator.busy || translator.metrics != nil || !server.lastTimings.isEmpty {
+                SettingsCard(title: "計測情報") {
+                    if translator.busy, let startedAt = translator.startedAt {
+                        TimelineView(.periodic(from: .now, by: 1)) { clock in
+                            SettingsRow("現在の経過時間") {
+                                Text("\(Int(max(0, clock.date.timeIntervalSince(startedAt))))秒").monospacedDigit()
+                            }
                         }
-                        if let tps = server.lastTimings["generation_tps"] { Text(String(format: "生成速度 %.1f token/s", tps)) }
-                    }.font(.callout.monospacedDigit()).foregroundStyle(.secondary).padding(.top, 10)
+                    }
+                    if let metrics = translator.metrics {
+                        DisclosureGroup("直近の翻訳") {
+                            VStack(alignment: .leading, spacing: 4) {
+                                if let elapsed = metrics.elapsed {
+                                    SettingsRow("所要時間") { Text(String(format: "%.2f秒", elapsed)).monospacedDigit() }
+                                }
+                                if let tokens = metrics.tokens {
+                                    SettingsRow("生成トークン数") { Text("\(tokens) tokens").monospacedDigit() }
+                                }
+                                if let tps = metrics.tps {
+                                    SettingsRow("生成速度") { Text(String(format: "%.1f token/s", tps)).monospacedDigit() }
+                                }
+                            }.padding(.top, 8)
+                        }
+                    }
+                    if !server.lastTimings.isEmpty {
+                        DisclosureGroup("直近のAPIリクエスト") {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach([("total_seconds", "合計"), ("queue_seconds", "待機"),
+                                         ("first_content_seconds", "最初の訳文まで"), ("load_seconds", "読み込み"),
+                                         ("prompt_seconds", "入力処理"), ("generation_seconds", "生成")], id: \.0) { key, label in
+                                    if let seconds = server.lastTimings[key] {
+                                        SettingsRow(label) { Text(String(format: "%.2f秒", seconds)).monospacedDigit() }
+                                    }
+                                }
+                                if let tps = server.lastTimings["generation_tps"] {
+                                    SettingsRow("生成速度") { Text(String(format: "%.1f token/s", tps)).monospacedDigit() }
+                                }
+                            }.padding(.top, 8)
+                        }
+                        .help("サーバー内の計測です。合計は待機やPython起動を含みます。入力処理・生成はMLXの速度から算出。転送・描画時間は含みません。")
+                    }
                 }
-                .help("サーバー内の計測です。合計は待機やPython起動を含みます。入力処理・生成はMLXの速度から算出。転送・描画時間は含みません。")
             }
-            Text("翻訳画面とモデルを共有します。混雑時に追加したモデルは、30秒の待機後に解放します。最後の1つは自動解放設定に従います。")
-                .font(.callout).foregroundStyle(.secondary)
         }
     }
 }
@@ -236,42 +262,58 @@ private struct ServerCapacityView: View {
     @ObservedObject var pool: ServerInferencePool
 
     var body: some View {
-        SettingsCard(title: "混雑時の処理") {
-            SettingsRow("最大並列数") {
-                Picker("最大並列数", selection: $pool.maxConcurrency) {
-                    ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
-                }.pickerStyle(.menu).frame(width: 100)
+        VStack(alignment: .leading, spacing: 18) {
+            SettingsCard(title: "混雑時の処理") {
+                SettingsRow("最大並列数") {
+                    Picker("最大並列数", selection: $pool.maxConcurrency) {
+                        ForEach(1...4, id: \.self) { Text("\($0)件").tag($0) }
+                    }.pickerStyle(.menu).frame(width: 160)
+                }
+                Divider()
+                SettingsRow("バッテリー時", description: "バッテリー駆動中も並列数を増やすことを許可します。") {
+                    Toggle("バッテリー駆動中も並列数を増やす", isOn: $pool.allowBattery)
+                }
+                Divider()
+                SettingsRow("メモリの余裕") {
+                    Picker("確保するメモリの余裕", selection: $pool.reserveGB) {
+                        ForEach([2, 4, 8, 12, 16], id: \.self) { Text("\($0) GB").tag($0) }
+                    }.pickerStyle(.menu).frame(width: 160)
+                }
+                DisclosureGroup("並列処理について") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("通常は1並列。最大32件を待機させ、電源・温度・メモリを確認して必要なときだけ増やします。低電力モード・高温・メモリプレッシャー時は1並列。実行中の翻訳は完了まで続けます。")
+                        Text("速度を優先する場合は、この設定と接続するアプリ側の並列数を1にしてください。並列ごとにモデル用メモリが必要で、GPUの競合により遅くなる場合があります。2以上はページ全体の完了時間を比較して選んでください。")
+                    }.font(.callout).foregroundStyle(.secondary).padding(.top, 8)
+                }
             }
-            Divider()
-            Toggle("バッテリー駆動中も並列数を増やす", isOn: $pool.allowBattery)
-            Divider()
-            SettingsRow("確保するメモリの余裕") {
-                Picker("確保するメモリの余裕", selection: $pool.reserveGB) {
-                    ForEach([2, 4, 8, 12, 16], id: \.self) { Text("\($0) GB").tag($0) }
-                }.pickerStyle(.menu).frame(width: 120)
-            }
-            Divider()
-            HStack(spacing: 8) {
-                if pool.loadedCount > 0 { Circle().fill(.green).frame(width: 8, height: 8).accessibilityHidden(true) }
-                Text("実行 \(pool.activeCount)件 · 待機 \(pool.waitingCount)件 · モデル \(pool.loadedCount)個")
-                    .monospacedDigit()
-            }
-            HStack {
-                Button("実行中を中止", action: pool.cancelActive).disabled(pool.activeCount == 0)
-                Button("待機モデルを解放", action: pool.unloadIdle).disabled(pool.loadedCount == 0)
-            }
-            Text(pool.reason).font(.callout).foregroundStyle(.secondary)
-            Text(String(format: "利用可能メモリの目安 %.1f GB · %@%@%@",
-                        Double(pool.resources.availableBytes) / 1_073_741_824,
-                        pool.resources.onACPower ? "外部電源で駆動" : "バッテリー",
-                        pool.resources.lowPower ? " · 低電力モード" : "",
-                        pool.resources.hot ? " · 高温" : ""))
-                .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-            DisclosureGroup("並列処理について") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("通常は1並列。最大32件を待機させ、電源・温度・メモリを確認して必要なときだけ増やします。低電力モード・高温・メモリプレッシャー時は1並列。実行中の翻訳は完了まで続けます。")
-                    Text("速度を優先する場合は、この設定と接続するアプリ側の並列数を1にしてください。並列ごとにモデル用メモリが必要で、GPUの競合により遅くなる場合があります。2以上はページ全体の完了時間を比較して選んでください。")
-                }.font(.callout).foregroundStyle(.secondary).padding(.top, 10)
+            SettingsCard(title: "現在の処理状況") {
+                SettingsRow("実行中") {
+                    Text("\(pool.activeCount)件").monospacedDigit().frame(width: 64, alignment: .leading)
+                    Button("実行中を中止", action: pool.cancelActive).disabled(pool.activeCount == 0)
+                }
+                Divider()
+                SettingsRow("待機中") { Text("\(pool.waitingCount)件").monospacedDigit() }
+                Divider()
+                SettingsRow("読み込み済みモデル") {
+                    Text("\(pool.loadedCount)個").monospacedDigit().frame(width: 64, alignment: .leading)
+                    Button("待機モデルを解放", action: pool.unloadIdle).disabled(pool.loadedCount == 0)
+                }
+                Text(pool.reason).font(.callout).foregroundStyle(.secondary)
+                Divider()
+                SettingsRow("利用可能メモリの目安") {
+                    Text(String(format: "%.1f GB", Double(pool.resources.availableBytes) / 1_073_741_824))
+                        .monospacedDigit()
+                }
+                SettingsRow("電源") {
+                    Label(pool.resources.onACPower ? "外部電源" : "バッテリー",
+                          systemImage: pool.resources.onACPower ? "powerplug" : "battery.100")
+                        .labelStyle(.titleAndIcon)
+                }
+                if pool.resources.lowPower || pool.resources.hot {
+                    Text([pool.resources.lowPower ? "低電力モード" : nil,
+                          pool.resources.hot ? "高温" : nil].compactMap { $0 }.joined(separator: " · "))
+                        .font(.callout).foregroundStyle(.secondary)
+                }
             }
         }
     }
