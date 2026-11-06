@@ -10,6 +10,7 @@ struct InputEditor: NSViewRepresentable {
     var textColor: NSColor = .textColor
     var focusRequest: UUID?
     var placeholder = ""
+    var accessibilityName = ""
     var submit: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -24,7 +25,7 @@ struct InputEditor: NSViewRepresentable {
         editor.isAutomaticTextReplacementEnabled = false
         editor.font = font
         editor.textColor = textColor
-        editor.textContainerInset = NSSize(width: 16, height: 18)
+        editor.textContainerInset = NSSize(width: 20, height: 20)
         editor.drawsBackground = false
         scroll.drawsBackground = false
         editor.isVerticallyResizable = true
@@ -35,6 +36,7 @@ struct InputEditor: NSViewRepresentable {
         editor.delegate = context.coordinator
         editor.submit = submit
         editor.placeholder = placeholder
+        if !accessibilityName.isEmpty { editor.setAccessibilityLabel(accessibilityName) }
         scroll.documentView = editor
         scroll.hasVerticalScroller = true
         return scroll
@@ -44,6 +46,7 @@ struct InputEditor: NSViewRepresentable {
         guard let editor = scroll.documentView as? Editor else { return }
         editor.submit = submit
         editor.placeholder = placeholder
+        if !accessibilityName.isEmpty { editor.setAccessibilityLabel(accessibilityName) }
         if let focusRequest, editor.focusRequest != focusRequest {
             // An explicit import replaces even an unfinished composition in this editor.
             editor.unmarkText()

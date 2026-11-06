@@ -4,6 +4,7 @@ import MarkdownUI
 
 struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var articlePopoverPresented = false
     @FocusState private var articleURLFocused: Bool
     @ObservedObject var preferences: Preferences
@@ -12,27 +13,44 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            HSplitView {
-                sourcePane.padding(.trailing, 6)
-                outputPane.padding(.leading, 6)
+            HStack(alignment: .top, spacing: 16) {
+                VStack(spacing: 0) {
+                    languageBar
+                    Divider()
+                    HSplitView {
+                        sourcePane
+                        outputPane
+                    }
+                }
+                .modifier(ReadingSurface(cornerRadius: 20))
+                if translator.optionsExpanded {
+                    translationOptions
+                        .frame(width: 284)
+                        .transition(.opacity)
+                }
             }
-            .frame(minHeight: 240)
-
-            if translator.optionsExpanded { translationOptions }
+            .frame(maxHeight: .infinity)
             actionBar
         }
         .padding(20)
         .background(Color(nsColor: .windowBackgroundColor))
-        .frame(minWidth: 900, minHeight: 560)
+        .frame(minWidth: 940, minHeight: 600)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: translator.optionsExpanded)
         .onAppear {
             selectionService?.showWindow = { openWindow(id: "translate") }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { openWindow(id: "server") } label: { Label("ローカルAPI", systemImage: "network") }
-                    .help("他アプリから翻訳APIに接続")
+                    .help("ローカルAPIを開く")
                 SettingsLink { Label("設定", systemImage: "gearshape") }
-                    .labelStyle(.iconOnly).help("設定（⌘,）")
+                    .help("設定（⌘,）")
+                Toggle(isOn: $translator.optionsExpanded) {
+                    Label("オプション", systemImage: "sidebar.right")
+                }
+                .toggleStyle(.button)
+                .keyboardShortcut("o", modifiers: [.command, .option])
+                .help("翻訳オプション（⌥⌘O）")
             }
         }
         .onChange(of: preferences.models) { _, models in
@@ -57,45 +75,92 @@ struct ContentView: View {
         } message: { Text(translator.fileError ?? "") }
     }
 
+    private var languageBar: some View {
+        HStack(spacing: 12) {
+            languagePicker("原文の言語", selection: $translator.source, automatic: true)
+                .frame(maxWidth: .infinity)
+            Button {
+                let previous = translator.source
+                translator.source = translator.target
+                translator.target = previous
+            } label: { toolIcon("言語を入れ替え", symbol: "arrow.left.arrow.right") }
+            .buttonStyle(.borderless)
+            .disabled(translator.source.isEmpty)
+            .help("原文と訳文の言語を入れ替え")
+            languagePicker("訳文の言語", selection: $translator.target, automatic: false)
+                .frame(maxWidth: .infinity)
+        }
+        .padding(.horizontal, 20).padding(.vertical, 14)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+    }
+
     private var sourcePane: some View {
         VStack(spacing: 0) {
-            paneHeading("原文", symbol: "text.alignleft")
-            HStack(spacing: 8) {
-                languagePicker("原文", selection: $translator.source, automatic: true)
-                Spacer(minLength: 0)
-                Button {
-                    let previous = translator.source
-                    translator.source = translator.target
-                    translator.target = previous
-                } label: { toolIcon("言語を入れ替え", symbol: "arrow.left.arrow.right") }
-                    .disabled(translator.source.isEmpty).help("言語を入れ替え")
-                previewButton(isOn: $translator.sourcePreview)
+            HStack(spacing: 4) {
+                paneHeading("原文")
+                Spacer(minLength: 4)
+                previewButton("原文", isOn: $translator.sourcePreview)
                 Button { translator.input = "" } label: { toolIcon("原文を消去", symbol: "xmark") }
                     .disabled(translator.input.isEmpty).help("原文を消去")
             }
             .buttonStyle(.borderless)
-            .padding(.horizontal, 14).padding(.bottom, 10)
-            Divider()
+            .padding(.horizontal, 18).padding(.top, 12)
             if translator.sourcePreview {
-                markdownPreview(translator.input, font: preferences.sourceFont,
-                                color: preferences.sourceColor)
+                markdownPreview(translator.input, font: preferences.sourceFont, color: preferences.sourceColor)
             } else {
                 InputEditor(text: $translator.input, font: preferences.sourceFont,
                             textColor: preferences.sourceColor, focusRequest: translator.inputFocusRequest,
-                            placeholder: "テキストを入力またはペースト",
+                            placeholder: "テキストを入力またはペースト", accessibilityName: "翻訳するテキスト",
                             submit: translator.translate)
-                    .accessibilityLabel("翻訳するテキスト")
             }
-            HStack {
+            VStack(alignment: .leading, spacing: 10) {
+                importActions
                 Text("\(translator.inputStatistics.characters)文字 · 原文トークン数 約\(translator.inputStatistics.estimatedTokens)")
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .help("原文のみの概算。文字種と長さから推定し、モデルは使用しません。Context・辞書・指示トークンは含みません。")
-                Spacer(minLength: 0)
             }
-            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            .padding(.horizontal, 18).frame(height: 34)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(18).padding(.top, 2)
         }
-        .frame(minWidth: 340)
-        .modifier(ReadingSurface())
+        .frame(minWidth: 260, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("原文")
+    }
+
+    private var importActions: some View {
+        HStack(spacing: 12) {
+            Button { articlePopoverPresented = true } label: {
+                Label(translator.fetchingArticle ? "取得中" : "記事を取得", systemImage: "link")
+            }
+            .disabled(translator.importingFile || translator.busy)
+            .help("URLから記事本文を取り込む")
+            .popover(isPresented: $articlePopoverPresented) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("記事を取得").font(.headline).accessibilityAddTraits(.isHeader)
+                    Text("URLから記事本文を取り込みます。")
+                        .font(.callout).foregroundStyle(.secondary)
+                    articleURLBar
+                }
+                .padding(20).frame(width: 440)
+                .onAppear { articleURLFocused = true }
+                .onDisappear { translator.focusInput() }
+            }
+            if translator.importingFile {
+                ProgressView().controlSize(.small)
+                Text(translator.fileProgress).font(.caption.monospacedDigit()).lineLimit(1)
+                Button("中止", action: translator.cancelFileImport)
+            } else {
+                Button("ファイル…", systemImage: "doc.badge.plus", action: translator.chooseFile)
+                    .disabled(translator.busy || translator.fetchingArticle)
+                    .accessibilityLabel("ファイルを取り込む")
+                    .help("PDF・TXT・Markdown・CSV・JSONなどを取り込む")
+            }
+            if translator.fetchingArticle {
+                ProgressView().controlSize(.small).accessibilityLabel("記事を取得中")
+            }
+        }
+        .controlSize(.small)
     }
 
     private var articleURLBar: some View {
@@ -111,6 +176,7 @@ struct ContentView: View {
                 Button("中止", action: translator.cancelArticleFetch)
             } else {
                 Button("取得", action: translator.fetchArticle)
+                    .buttonStyle(.borderedProminent)
                     .disabled(translator.articleURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || translator.importingFile || translator.busy)
                     .help("記事本文をMarkdownに変換し、原文を置き換えます")
             }
@@ -119,18 +185,17 @@ struct ContentView: View {
 
     private var outputPane: some View {
         VStack(spacing: 0) {
-            paneHeading("訳文", symbol: "character.bubble")
-            HStack(spacing: 8) {
-                languagePicker("訳文", selection: $translator.target, automatic: false)
-                Spacer(minLength: 0)
+            HStack(spacing: 4) {
+                paneHeading("訳文")
+                Spacer(minLength: 4)
                 if translator.target == "ja" {
                     Picker("文体", selection: $translator.form) {
-                        Text("文体").tag("")
+                        Text("文体の指定なし").tag("")
                         Text("常体").tag("plain")
                         Text("敬体").tag("polite")
-                    }.labelsHidden().fixedSize().help("文体")
+                    }.labelsHidden().fixedSize().controlSize(.small).help("日本語の文体")
                 }
-                previewButton(isOn: $translator.outputPreview)
+                previewButton("訳文", isOn: $translator.outputPreview)
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(translator.output, forType: .string)
@@ -138,185 +203,176 @@ struct ContentView: View {
                     .disabled(translator.output.isEmpty).help("訳文をコピー")
             }
             .buttonStyle(.borderless)
-            .padding(.horizontal, 14).padding(.bottom, 10)
-            Divider()
+            .padding(.horizontal, 18).padding(.top, 12)
             if translator.outputPreview {
-                markdownPreview(translator.output, font: preferences.outputFont,
-                                color: preferences.outputColor)
+                markdownPreview(translator.output, font: preferences.outputFont, color: preferences.outputColor)
             } else {
                 InputEditor(text: .constant(translator.output), editable: false, font: preferences.outputFont,
-                            textColor: preferences.outputColor)
-                    .accessibilityLabel("翻訳結果")
+                            textColor: preferences.outputColor, placeholder: "翻訳結果がここに表示されます",
+                            accessibilityName: "翻訳結果")
             }
             HStack {
                 if let metrics = translator.metrics { metricsView(metrics) }
                 Spacer(minLength: 0)
-            }.padding(.horizontal, 18).frame(height: 34)
+            }
+            .frame(minHeight: 48, alignment: .bottom)
+            .padding(18).padding(.top, 2)
         }
-        .frame(minWidth: 340)
-        .modifier(ReadingSurface())
+        .frame(minWidth: 260, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("訳文")
     }
 
     private var translationOptions: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Label("翻訳オプション", systemImage: "slider.horizontal.3")
-                    .font(.headline).accessibilityAddTraits(.isHeader)
-                HStack(spacing: 12) {
-                    if preferences.models.isEmpty {
-                        Button("モデルを追加…", systemImage: "plus", action: preferences.addModel)
-                    } else {
-                        Picker("モデル", selection: $translator.modelID) {
-                            Text("モデルを選択").tag(nil as UUID?)
-                            ForEach(preferences.models) { model in
-                                Text(model.tag).tag(Optional(model.id))
+        VStack(spacing: 0) {
+            HStack {
+                Text("翻訳オプション").font(.headline).accessibilityAddTraits(.isHeader)
+                Spacer()
+                Button { translator.optionsExpanded = false } label: {
+                    toolIcon("翻訳オプションを閉じる", symbol: "xmark")
+                }.buttonStyle(.borderless).help("翻訳オプションを閉じる（⌥⌘O）")
+            }
+            .padding(.horizontal, 18).padding(.vertical, 12)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    optionSection("モデル", symbol: "square.stack.3d.up") {
+                        if preferences.models.isEmpty {
+                            Text("モデルを登録して翻訳を始めましょう。")
+                                .font(.callout).foregroundStyle(.secondary)
+                            Button("モデルを追加…", systemImage: "plus", action: preferences.addModel)
+                        } else {
+                            Picker("モデル", selection: $translator.modelID) {
+                                Text("モデルを選択").tag(nil as UUID?)
+                                ForEach(preferences.models) { Text($0.tag).tag(Optional($0.id)) }
+                            }.labelsHidden().pickerStyle(.menu)
+                            HStack(spacing: 6) {
+                                Circle().fill(translator.busy || translator.loaded ? Color.green : Color.secondary)
+                                    .frame(width: 7, height: 7).accessibilityHidden(true)
+                                Text(translator.loaded ? "読み込み済み" : translator.busy ? "読み込み中" : "未読み込み")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer(minLength: 0)
+                                if translator.loaded {
+                                    Button("解放", systemImage: "eject", action: translator.unload)
+                                        .disabled(translator.busy).controlSize(.small).help("モデルをメモリから解放")
+                                }
                             }
                         }
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: 440)
                     }
-                    Spacer(minLength: 0)
-                    if translator.busy || translator.loaded {
-                        Circle().fill(.green).frame(width: 7, height: 7).accessibilityHidden(true)
-                        Text(translator.loaded ? "読み込み済み" : "読み込み中")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    if translator.loaded {
-                        Button("解放", systemImage: "eject", action: translator.unload)
-                            .disabled(translator.busy).help("モデルを解放")
-                    }
-                }
-                Divider()
-                HStack(alignment: .top, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 8) {
+                    Divider()
+                    optionSection("コンテキスト", symbol: "text.bubble") {
                         Picker("プリセット", selection: $translator.presetID) {
-                            Text("なし").tag(nil as String?)
+                            Text("プリセットなし").tag(nil as String?)
                             ForEach(preferences.contextPresets) { Text($0.label).tag(Optional($0.id)) }
-                        }.pickerStyle(.menu)
+                        }.labelsHidden().pickerStyle(.menu)
                         if let preset = translator.selectedPreset {
-                            Text(preset.contextDescription).font(.caption).foregroundStyle(.secondary)
-                                .lineLimit(3).help(preset.contextDescription)
+                            Text(preset.contextDescription)
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        Text("追加のコンテキスト").font(.subheadline).foregroundStyle(.secondary)
+                        Text("追加のコンテキスト").font(.caption).foregroundStyle(.secondary)
                         TextEditor(text: $translator.context)
                             .font(.body).scrollContentBackground(.hidden)
-                            .padding(6).frame(height: 76)
-                            .modifier(ReadingSurface(cornerRadius: 8))
-                            .accessibilityLabel("コンテキスト")
-                    }.frame(maxWidth: .infinity)
-                    VStack(alignment: .leading, spacing: 12) {
-                        Toggle("辞書（\(preferences.glossary.filter { !$0.source.isEmpty && !$0.target.isEmpty }.count)語）", isOn: $translator.useGlossary)
-                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-                            GridRow {
-                                Text("Max tokens")
-                                TextField("Max tokens", value: $translator.maxTokens, format: .number.grouping(.never))
-                            }
-                            GridRow {
-                                Text("Temperature")
-                                TextField("Temperature", value: $translator.temperature, format: .number)
-                            }
-                        }.textFieldStyle(.roundedBorder)
-                    }.frame(width: 240)
+                            .padding(8).frame(height: 112)
+                            .modifier(ReadingSurface(cornerRadius: 10))
+                            .accessibilityLabel("追加のコンテキスト")
+                    }
+                    Divider()
+                    optionSection("生成", symbol: "slider.horizontal.3") {
+                        LabeledContent("最大トークン数") {
+                            TextField("最大トークン数", value: $translator.maxTokens, format: .number.grouping(.never))
+                                .frame(width: 80)
+                        }
+                        LabeledContent("Temperature") {
+                            TextField("Temperature", value: $translator.temperature, format: .number)
+                                .frame(width: 80)
+                        }
+                        Toggle("辞書を使用（\(preferences.glossary.filter { !$0.source.isEmpty && !$0.target.isEmpty }.count)語）", isOn: $translator.useGlossary)
+                            .padding(.top, 4)
+                    }
+                    .font(.callout).textFieldStyle(.roundedBorder)
                 }
+                .padding(18)
             }
-            .padding(18)
+            .scrollIndicators(.visible)
         }
-        .frame(maxHeight: 260)
-        .modifier(ReadingSurface())
+        .frame(maxHeight: .infinity)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .modifier(SurfaceBorder(cornerRadius: 20))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("翻訳オプション")
     }
 
+    private func optionSection<Content: View>(_ title: String, symbol: String,
+                                              @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: symbol)
+                .font(.subheadline.weight(.semibold)).accessibilityAddTraits(.isHeader)
+            content()
+        }
+    }
 
     private var actionBar: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                Toggle(isOn: $translator.optionsExpanded) {
-                    Label("オプション", systemImage: "slider.horizontal.3")
-                }
-                .toggleStyle(.button)
-                .keyboardShortcut("o", modifiers: [.command, .option])
-                .help("翻訳オプション（⌥⌘O）")
-                Button {
-                    articlePopoverPresented = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Label(translator.fetchingArticle ? "記事を取得中" : "記事を取得", systemImage: "link")
-                        if translator.fetchingArticle { ProgressView().controlSize(.small) }
-                    }
-                }
-                .disabled(translator.importingFile || translator.busy)
-                .popover(isPresented: $articlePopoverPresented) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("記事を取得").font(.headline)
-                        articleURLBar
-                    }
-                    .padding(16).frame(width: 440)
-                    .onAppear { articleURLFocused = true }
-                    .onDisappear { translator.focusInput() }
-                }
-                if translator.importingFile {
-                    ProgressView().controlSize(.small)
-                    Text(translator.fileProgress).font(.caption.monospacedDigit())
-                    Button("中止", action: translator.cancelFileImport)
+        HStack(spacing: 16) {
+            if translator.busy {
+                if let progress = translator.progress {
+                    ProgressView(value: progress).frame(width: 60).accessibilityLabel("翻訳の進捗")
                 } else {
-                    Button("ファイルを取り込む…", systemImage: "doc.badge.plus", action: translator.chooseFile)
-                        .disabled(translator.busy || translator.fetchingArticle)
-                        .help("PDF・TXT・Markdown・CSV・JSONなどを端末内で読み込みます")
+                    ProgressView().controlSize(.small).accessibilityLabel("翻訳を処理中")
                 }
-                if let preset = translator.selectedPreset {
-                    Text(preset.emoji.isEmpty ? "✨" : preset.emoji).help(preset.label + "\n" + preset.contextDescription)
-                }
-                Spacer(minLength: 0)
             }
-            .controlSize(.regular)
-            Divider()
-            HStack(spacing: 12) {
-                if translator.busy {
-                    if let progress = translator.progress {
-                        ProgressView(value: progress).frame(width: 64)
-                            .accessibilityLabel("翻訳の進捗")
-                    } else { ProgressView().controlSize(.small).accessibilityLabel("翻訳を処理中") }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(translator.status.isEmpty ? idleStatus : translator.status)
+                    .font(.callout).foregroundStyle(.secondary).lineLimit(2).help(translator.status)
+                if translator.busy, let startedAt = translator.startedAt {
+                    TimelineView(.periodic(from: .now, by: 1)) { clock in
+                        Text("経過 \(Int(max(0, clock.date.timeIntervalSince(startedAt))))秒")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
                 }
-                Text(translator.status).font(.subheadline).foregroundStyle(.secondary)
-                    .lineLimit(2).help(translator.status)
-                Spacer(minLength: 12)
-                if translator.busy {
-                    Button("中止", action: translator.cancel).keyboardShortcut(.cancelAction)
-                }
-                Button("翻訳", systemImage: "arrow.right", action: translator.translate)
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(!translator.canTranslate)
-                    .help("翻訳（⌘Return）。入力中はReturn、改行はShift+Return")
             }
-            .controlSize(.large)
+            Spacer(minLength: 0)
+            if translator.busy {
+                Button("中止", action: translator.cancel).keyboardShortcut(.cancelAction)
+            }
+            Button("翻訳", systemImage: "arrow.right", action: translator.translate)
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!translator.canTranslate)
+                .help("翻訳（⌘Return）。入力中はReturn、改行はShift+Return")
         }
+        .controlSize(.large)
         .padding(14)
-        .modifier(ControlSurface())
+        .modifier(ReadingSurface(cornerRadius: 16))
     }
 
+    private var idleStatus: String {
+        if translator.modelID == nil { return "オプションでモデルを選択してください" }
+        return translator.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "テキストを入力して翻訳" : "翻訳の準備ができました"
+    }
 
-    private func paneHeading(_ title: String, symbol: String) -> some View {
-        Label(title, systemImage: symbol)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 8)
+    private func paneHeading(_ title: String) -> some View {
+        Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
             .accessibilityAddTraits(.isHeader)
     }
 
     private func toolIcon(_ title: String, symbol: String) -> some View {
         Label(title, systemImage: symbol)
             .labelStyle(.iconOnly)
-            .frame(width: 28, height: 28)
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .frame(width: 30, height: 30)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private func previewButton(isOn: Binding<Bool>) -> some View {
+    private func previewButton(_ pane: String, isOn: Binding<Bool>) -> some View {
         Toggle(isOn: isOn) {
-            toolIcon("Markdownプレビュー", symbol: isOn.wrappedValue ? "text.alignleft" : "eye")
+            toolIcon("Markdownプレビュー", symbol: "doc.richtext")
         }
         .toggleStyle(.button).buttonStyle(.borderless)
-        .foregroundStyle(isOn.wrappedValue ? Color.accentColor : Color.primary)
+        .foregroundStyle(isOn.wrappedValue ? Color.accentColor : Color.secondary)
+        .background(isOn.wrappedValue ? Color.accentColor.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityLabel("\(pane)のMarkdownプレビュー")
         .accessibilityValue(isOn.wrappedValue ? "プレビュー" : "生テキスト")
         .help(isOn.wrappedValue ? "生テキストを表示" : "Markdownをプレビュー")
     }
@@ -333,15 +389,23 @@ struct ContentView: View {
             ForEach(Language.all) { language in Text(language.name).tag(language.id) }
         }
         .labelsHidden().pickerStyle(.menu)
-        .frame(maxWidth: 200, alignment: .leading)
-        .help(label + "の言語")
+        .controlSize(.large)
+        .font(.system(size: 17, weight: .medium))
+        .accessibilityLabel(label)
+        .help(label)
     }
 
     private func metricsView(_ metrics: WorkerEvent) -> some View {
         HStack(spacing: 12) {
-            if let elapsed = metrics.elapsed { Text(String(format: "%.2f秒", elapsed)) }
-            if let tokens = metrics.tokens { Text("\(tokens) tokens") }
-            if let tps = metrics.tps { Text(String(format: "%.1f token/s", tps)) }
+            if let elapsed = metrics.elapsed {
+                Text(String(format: "%.2f秒", elapsed)).accessibilityLabel(String(format: "所要時間 %.2f秒", elapsed))
+            }
+            if let tokens = metrics.tokens {
+                Text("\(tokens) tokens").accessibilityLabel("生成トークン数 \(tokens)")
+            }
+            if let tps = metrics.tps {
+                Text(String(format: "%.1f token/s", tps)).accessibilityLabel(String(format: "生成速度 毎秒%.1fトークン", tps))
+            }
         }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             .help("時間はモデル読み込み・入力処理を含む。token/sは生成速度。入力: \(metrics.prompt_tokens ?? 0) tokens、入力処理: \(String(format: "%.1f", metrics.prompt_tps ?? 0)) token/s、読み込み: \(String(format: "%.2f", metrics.load_seconds ?? 0))秒")
     }

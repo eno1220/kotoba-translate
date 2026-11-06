@@ -36,13 +36,15 @@ struct KotobaTranslateApp: App {
                     NSApplication.shared.activate(ignoringOtherApps: true)
                 }
         }
-        .defaultSize(width: 1060, height: 720)
+        .defaultSize(width: 1180, height: 780)
         .windowToolbarStyle(.unified)
         Window("ローカルAPI — Kotoba Translate", id: "server") {
             ServerView(server: server, preferences: preferences, translator: translator)
         }
-        .defaultSize(width: 800, height: 780)
+        .defaultSize(width: 1040, height: 820)
+        .windowToolbarStyle(.unifiedCompact)
         Settings { PreferencesView(preferences: preferences) }
+            .windowToolbarStyle(.unifiedCompact)
         MenuBarExtra(isInserted: .constant(server.running || server.starting)) {
             ServerStatusMenu(server: server)
         } label: {

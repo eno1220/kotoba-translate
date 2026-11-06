@@ -34,8 +34,8 @@ struct PresetSettingsView: View {
     @ObservedObject var preferences: Preferences
 
     var body: some View {
-        Form {
-            Section("自分のプリセット") {
+        SettingsPage {
+            SettingsCard(title: "自分のプリセット") {
                 if preferences.customPresets.isEmpty {
                     Label("独自の場面や背景を登録できます", systemImage: "face.smiling")
                         .foregroundStyle(.secondary)
@@ -65,12 +65,13 @@ struct PresetSettingsView: View {
                             .modifier(ReadingSurface(cornerRadius: 10))
                             .accessibilityLabel("プリセット「\(preset.name)」の場面・背景")
                     }
+                    Divider()
                 }
                 Button("プリセットを追加", systemImage: "plus") { preferences.customPresets.append(ContextPreset()) }
                 Text("原文の前後の文章や場面・背景を記入します。絵文字・名前・説明を保存します。翻訳画面で入力したコンテキストは保存しません。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("アプリ別の自動適用") {
+            SettingsCard(title: "アプリ別の自動適用") {
                 if preferences.appPresetRules.isEmpty {
                     Label("自動適用するアプリが登録されていません", systemImage: "app.badge")
                         .foregroundStyle(.secondary)
@@ -82,19 +83,20 @@ struct PresetSettingsView: View {
                         Picker("プリセット", selection: binding.presetID) {
                             Text("自動適用しない").tag(nil as String?)
                             ForEach(preferences.contextPresets) { Text($0.label).tag(Optional($0.id)) }
-                        }.labelsHidden().frame(width: 210)
+                        }.pickerStyle(.menu).labelsHidden().frame(width: 210)
                             .accessibilityLabel("\(rule.name)のプリセット")
                         Button(role: .destructive) { preferences.appPresetRules.removeAll { $0.id == rule.id } } label: {
                             Image(systemName: "minus.circle")
                         }.buttonStyle(.borderless).help("アプリの設定を削除")
                             .accessibilityLabel("\(rule.name)の自動適用設定を削除")
                     }
+                    Divider()
                 }
                 Button("アプリを追加…", systemImage: "plus", action: preferences.addPresetApp)
                 Text("サービス（キーボードショートカットを含む）から受け取る際に、取得できた呼び出し元アプリに適用します。未登録・取得できない場合や「自動適用しない」は、現在の選択を維持します。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-        }.formStyle(.grouped)
+        }
     }
 
     // SwiftUI can still read or commit an editor's binding while its row is being
