@@ -7,6 +7,7 @@ struct KotobaTranslateApp: App {
     @StateObject private var preferences: Preferences
     @StateObject private var translator: Translator
     @StateObject private var server: LocalAPIServer
+    @State private var settingsSelection: SettingsSection? = .general
     private static let menuBarIcon: NSImage = {
         guard let url = Bundle.module.url(forResource: "MenuBarIcon", withExtension: "png", subdirectory: "Resources"),
               let image = NSImage(contentsOf: url) else {
@@ -38,13 +39,12 @@ struct KotobaTranslateApp: App {
         }
         .defaultSize(width: 1180, height: 780)
         .windowToolbarStyle(.unified)
-        Window("ローカルAPI — Kotoba Translate", id: "server") {
-            ServerView(server: server, preferences: preferences, translator: translator)
+        Settings {
+            PreferencesView(preferences: preferences, server: server, translator: translator,
+                            selection: $settingsSelection)
         }
-        .defaultSize(width: 1040, height: 820)
-        Settings { PreferencesView(preferences: preferences) }
         MenuBarExtra {
-            ServerStatusMenu(server: server)
+            ServerStatusMenu(server: server, settingsSelection: $settingsSelection)
         } label: {
             MenuBarStatusLabel(icon: Self.menuBarIcon, server: server, pool: server.inference)
         }
@@ -54,7 +54,9 @@ struct KotobaTranslateApp: App {
 
 private struct ServerStatusMenu: View {
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     @ObservedObject var server: LocalAPIServer
+    @Binding var settingsSelection: SettingsSection?
 
     var body: some View {
         Group {
@@ -73,7 +75,8 @@ private struct ServerStatusMenu: View {
             }
             Divider()
             Button("翻訳画面を開く", systemImage: "macwindow") { showWindow("translate") }
-            Button("ローカルAPI設定を開く…", systemImage: "slider.horizontal.3") { showWindow("server") }
+            Button("設定…", systemImage: "gearshape") { showSettings(.general) }
+            Button("ローカルAPI設定…", systemImage: "network") { showSettings(.server) }
             Button("Base URLをコピー", systemImage: "doc.on.doc") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(server.baseURL, forType: .string)
@@ -86,13 +89,19 @@ private struct ServerStatusMenu: View {
             ))
             if let error = server.error {
                 Text(error)
-                Button("サーバー設定を確認…") { showWindow("server") }
+                Button("サーバー設定を確認…") { showSettings(.server) }
             }
             Divider()
             Button("Kotoba Translateを終了", systemImage: "power") { NSApp.terminate(nil) }
                 .keyboardShortcut("q")
         }
         .preferredColorScheme(.light)
+    }
+
+    private func showSettings(_ section: SettingsSection) {
+        settingsSelection = section
+        openSettings()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func showWindow(_ id: String) {

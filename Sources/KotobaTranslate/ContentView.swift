@@ -41,12 +41,8 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button { openWindow(id: "server") } label: { Label("ローカルAPI", systemImage: "network") }
-                    .help("ローカルAPIを開く")
-                SettingsLink { Label("設定", systemImage: "gearshape") }
-                    .help("設定（⌘,）")
                 Toggle(isOn: $translator.optionsExpanded) {
-                    Label("オプション", systemImage: "sidebar.right")
+                    Label("翻訳オプション", systemImage: "sidebar.right")
                 }
                 .toggleStyle(.button)
                 .keyboardShortcut("o", modifiers: [.command, .option])

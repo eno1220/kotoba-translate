@@ -1,19 +1,11 @@
 import AppKit
 import SwiftUI
 
-struct ServerView: View {
+struct ServerSettingsView: View {
     @ObservedObject var server: LocalAPIServer
     @ObservedObject var preferences: Preferences
     @ObservedObject var translator: Translator
     @State private var portText: String
-    @State private var selection: ServerPage? = .connection
-
-    private enum ServerPage: String, CaseIterable, Identifiable {
-        case connection, request
-        var id: Self { self }
-        var title: String { self == .connection ? "サーバー" : "リクエストを試す" }
-        var symbol: String { self == .connection ? "network" : "curlybraces" }
-    }
 
     init(server: LocalAPIServer, preferences: Preferences, translator: Translator) {
         self.server = server
@@ -34,10 +26,6 @@ struct ServerView: View {
         return nil
     }
 
-    private var serverStatusText: String {
-        server.running ? "サーバー受付中" : server.starting ? "サーバー起動中" : "サーバー停止中"
-    }
-
     private var serverSummary: String {
         if server.starting { return "接続の準備をしています。" }
         if server.running { return "127.0.0.1:\(server.port) で接続を受け付けています。" }
@@ -45,48 +33,18 @@ struct ServerView: View {
     }
 
     var body: some View {
-        HSplitView {
-            List(ServerPage.allCases, selection: $selection) { page in
-                SettingsNavigationLabel(title: page.title, symbol: page.symbol).tag(page)
+        connectionSettings
+            .onChange(of: portText) { _, value in
+                if let port = Int(value), (1024...65535).contains(port) { server.port = port }
             }
-            .listStyle(.sidebar)
-            .safeAreaInset(edge: .bottom) {
-                HStack {
-                    StatusBadge(text: serverStatusText,
-                                tone: server.running ? .active : server.starting ? .busy : .neutral)
-                    Spacer(minLength: 0)
-                }
-                .padding(18)
+            .onChange(of: server.port) { _, value in portText = String(value) }
+            .onChange(of: preferences.models, initial: true) { _, models in
+                if let id = server.modelID, !models.contains(where: { $0.id == id }) { server.modelID = nil }
             }
-            .frame(minWidth: 200, idealWidth: 220, maxWidth: 260, maxHeight: .infinity)
-            VStack(spacing: 0) {
-                ZStack {
-                    // Keep the draft when navigating, and cancel its request when leaving it.
-                    RequestBuilderView(server: server, active: selection == .request)
-                        .opacity(selection == .request ? 1 : 0)
-                        .allowsHitTesting(selection == .request)
-                        .accessibilityHidden(selection != .request)
-                        .disabled(selection != .request)
-                    if selection != .request { connectionSettings }
-                }
-            }
-            .background { ScreenBackground() }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(minWidth: 940, minHeight: 700)
-        .background(MinimalWindowTitlebar())
-        .preferredColorScheme(.light)
-        .onChange(of: portText) { _, value in
-            if let port = Int(value), (1024...65535).contains(port) { server.port = port }
-        }
-        .onChange(of: server.port) { _, value in portText = String(value) }
-        .onChange(of: preferences.models, initial: true) { _, models in
-            if let id = server.modelID, !models.contains(where: { $0.id == id }) { server.modelID = nil }
-        }
     }
 
     private var connectionSettings: some View {
-        SettingsPage(title: "サーバー", description: "このMacのアプリから翻訳に接続します。") {
+        SettingsPage(title: "ローカルAPI", description: "このMacのアプリから翻訳に接続します。") {
             SettingsCard(title: "") {
                 HStack(alignment: .center, spacing: 16) {
                     SettingsIcon(symbol: "network", size: 44)
@@ -350,7 +308,7 @@ struct RequestDraft: Equatable {
     }
 }
 
-private struct RequestBuilderView: View {
+struct RequestBuilderView: View {
     @ObservedObject var server: LocalAPIServer
     var active: Bool
     @State private var draft = RequestDraft()
@@ -432,7 +390,7 @@ private struct RequestBuilderView: View {
                         .modifier(ReadingSurface(cornerRadius: 12, fill: KotobaTheme.well))
                         .accessibilityLabel("送信するJSON（編集可）")
                         .focused($jsonFocused).disabled(sending)
-                    SettingsFootnote(text: "このJSONをそのまま送信します。言語・文体を省略した場合は「サーバー」画面の既定値を使います。APIキーはヘッダーに付与し、JSONには含めません。", symbol: "info.circle")
+                    SettingsFootnote(text: "このJSONをそのまま送信します。言語・文体を省略した場合は「ローカルAPI」画面の既定値を使います。APIキーはヘッダーに付与し、JSONには含めません。", symbol: "info.circle")
                     if let requestError {
                         Label(requestError, systemImage: "exclamationmark.triangle")
                             .font(.system(size: 12)).foregroundStyle(.red).textSelection(.enabled)
@@ -462,7 +420,7 @@ private struct RequestBuilderView: View {
                         Text(sending ? "送信中" : server.running ? "送信先" : "サーバーが停止しています")
                             .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                     }
-                    Text(server.running ? "POST \(server.baseURL)/chat/completions" : "「サーバー」画面で開始してください。")
+                    Text(server.running ? "POST \(server.baseURL)/chat/completions" : "「ローカルAPI」画面で開始してください。")
                         .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }

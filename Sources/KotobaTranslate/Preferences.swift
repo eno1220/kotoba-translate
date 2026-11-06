@@ -146,40 +146,48 @@ struct Language: Identifiable {
     }()
 }
 
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case general, presets, typography, glossary, server, request
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .general: "一般"
+        case .presets: "プリセット"
+        case .typography: "文字"
+        case .glossary: "辞書"
+        case .server: "ローカルAPI"
+        case .request: "リクエストを試す"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .general: "cpu"
+        case .presets: "text.bubble"
+        case .typography: "textformat"
+        case .glossary: "character.book.closed"
+        case .server: "network"
+        case .request: "curlybraces"
+        }
+    }
+    var description: String {
+        switch self {
+        case .general: "モデルと実行環境を管理します。"
+        case .presets: "よく使う場面や背景を、翻訳に適用できます。"
+        case .typography: "言語ごとのフォントと、共通の文字色を調整します。"
+        case .glossary: "すべての翻訳で使う、原語と訳語の対応を登録します。"
+        case .server: "このMacのアプリから翻訳に接続します。"
+        case .request: "JSONを作成して、このMacのAPIで翻訳を試します。"
+        }
+    }
+}
+
 struct PreferencesView: View {
     @ObservedObject var preferences: Preferences
     private static let fontFamilies = NSFontManager.shared.availableFontFamilies.sorted()
     @State private var fontLanguage = "ja"
-    @State private var selection: SettingsSection? = .general
-
-    private enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, presets, typography, glossary
-        var id: Self { self }
-        var title: String {
-            switch self {
-            case .general: "一般"
-            case .presets: "プリセット"
-            case .typography: "文字"
-            case .glossary: "辞書"
-            }
-        }
-        var symbol: String {
-            switch self {
-            case .general: "cpu"
-            case .presets: "text.bubble"
-            case .typography: "textformat"
-            case .glossary: "character.book.closed"
-            }
-        }
-        var description: String {
-            switch self {
-            case .general: "モデルと実行環境を管理します。"
-            case .presets: "よく使う場面や背景を、翻訳に適用できます。"
-            case .typography: "言語ごとのフォントと、共通の文字色を調整します。"
-            case .glossary: "すべての翻訳で使う、原語と訳語の対応を登録します。"
-            }
-        }
-    }
+    @ObservedObject var server: LocalAPIServer
+    @ObservedObject var translator: Translator
+    @Binding var selection: SettingsSection?
 
     var body: some View {
         HSplitView {
@@ -196,7 +204,13 @@ struct PreferencesView: View {
                 .foregroundStyle(.secondary).padding(18)
             }
             .frame(minWidth: 200, idealWidth: 220, maxWidth: 260, maxHeight: .infinity)
-            VStack(spacing: 0) {
+            ZStack {
+                // Keep the request draft in memory while navigating settings.
+                RequestBuilderView(server: server, active: selection == .request)
+                    .opacity(selection == .request ? 1 : 0)
+                    .allowsHitTesting(selection == .request)
+                    .accessibilityHidden(selection != .request)
+                    .disabled(selection != .request)
                 let section = selection ?? .general
                 switch section {
                 case .general:
@@ -209,12 +223,16 @@ struct PreferencesView: View {
                     typographySettings
                 case .glossary:
                     glossarySettings
+                case .server:
+                    ServerSettingsView(server: server, preferences: preferences, translator: translator)
+                case .request:
+                    Color.clear.allowsHitTesting(false)
                 }
             }
             .background { ScreenBackground() }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 900, idealWidth: 1000, minHeight: 640, idealHeight: 760)
+        .frame(minWidth: 940, idealWidth: 1040, minHeight: 700, idealHeight: 820)
         .background(MinimalWindowTitlebar())
         .preferredColorScheme(.light)
     }
