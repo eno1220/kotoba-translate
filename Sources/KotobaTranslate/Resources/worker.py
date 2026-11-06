@@ -16,7 +16,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 PROTOCOL = sys.stdout
 sys.stdout = sys.stderr  # Model/runtime diagnostics must never corrupt the protocol.
 
-LANGUAGES = set("ja en zh-hans zh-hant ko ar az be bg bn ca ceb de es et eu fa fr gu he hi hr hu hy id it jv ka kk km lt lv ml mr ms my ne nl pa pl ru si sk sl sr sw ta te th tl ur uz vi".split())
+LANGUAGES = set("ja en ja(easy) zh-hans zh-hant ko ar az be bg bn ca ceb de es et eu fa fr gu he hi hr hu hy id it jv ka kk km lt lv ml mr ms my ne nl pa pl ru si sk sl sr sw ta te th tl ur uz vi".split())
 STOP = ("<|plamo:tag|>", "<|plamo:bos|>")
 
 
