@@ -326,7 +326,7 @@ struct RequestDraft: Equatable {
     var target = "ja"
     var form = ""
     var useGlossary = true
-    var maxTokens = "2048"
+    var maxTokens = "8192"
     var temperature = "0"
     var stream = true
 

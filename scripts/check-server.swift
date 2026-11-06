@@ -11,6 +11,14 @@ struct ServerCheck {
     @MainActor
     static func main() async throws {
         var draft = RequestDraft()
+        try require(draft.maxTokens == "8192", "request builder defaults to 8192 tokens")
+        let defaultChat = try JSONDecoder().decode(ChatRequest.self, from: Data(#"{"messages":[{"role":"user","content":"hello"}]}"#.utf8))
+        let defaultTranslation = try defaultChat.translation(modelPath: "/mock", source: "", target: "ja", form: "", terms: [])
+        try require(defaultTranslation.max_tokens == 8192 && defaultTranslation.auto_split, "API defaults to 8192 tokens and auto splitting")
+        try require(try !defaultChat.translation(modelPath: "/mock", source: "", target: "ja", form: "", terms: [], autoSplit: false).auto_split, "API inherits disabled preference")
+        let overrideChat = try JSONDecoder().decode(ChatRequest.self, from: Data(#"{"messages":[{"role":"user","content":"hello"}],"max_tokens":64,"auto_split":true}"#.utf8))
+        let overridden = try overrideChat.translation(modelPath: "/mock", source: "", target: "ja", form: "", terms: [], autoSplit: false)
+        try require(overridden.max_tokens == 64 && overridden.auto_split, "API can override token count and splitting preference")
         try require(draft.issue != nil, "request form rejects empty input")
         draft.text = "hello"
         try require(draft.issue == nil, "request form accepts defaults")
@@ -48,6 +56,11 @@ struct ServerCheck {
                 continue
             print(json.dumps(dict(event='prefill', current=0, total=5)), flush=True)
             time.sleep(10 if r['text'] == 'slow' else 0.1)
+            if r['text'] == 'draft':
+                print(json.dumps(dict(event='delta', text='first:')), flush=True)
+            print(json.dumps(dict(event='draft', text='discarded attempt')), flush=True)
+            print(json.dumps(dict(event='draft', text='')), flush=True)
+            print(json.dumps(dict(event='draft', text='provisional translation')), flush=True)
             print(json.dumps(dict(event='delta', text=str(os.getpid()) + ':訳:' + r['text'], tokens=3, tps=30)), flush=True)
             print(json.dumps(dict(event='done', tokens=3, prompt_tokens=5, tps=30, prompt_tps=100, load_seconds=0.01, elapsed=0.1, finish_reason='stop')), flush=True)
         """.write(to: worker, atomically: true, encoding: .utf8)
@@ -57,6 +70,20 @@ struct ServerCheck {
         preferences.python = worker.path
         preferences.glossary = []
         preferences.unloadSeconds = 60
+        preferences.autoSplit = false
+        try require(!Preferences().autoSplit, "automatic splitting preference persists")
+        preferences.autoSplit = true
+        let draftEngine = Translator(preferences: preferences)
+        try require(draftEngine.maxTokens == 8192, "editor defaults to 8192 tokens")
+        draftEngine.input = "draft"
+        draftEngine.translate()
+        for _ in 0..<200 {
+            if !draftEngine.busy { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try require(!draftEngine.busy && draftEngine.error == nil && draftEngine.output.hasPrefix("first:") && draftEngine.output.hasSuffix(":訳:draft"), "committed prefix survives draft replacement")
+        try require(!draftEngine.output.contains("discarded") && !draftEngine.output.contains("provisional"), "retried drafts do not duplicate editor output")
+        draftEngine.unload()
         let engine = Translator(preferences: preferences)
         try await checkPresetsAndFiles(preferences, engine: engine, directory: directory)
         engine.input = "keep input"
@@ -117,6 +144,7 @@ struct ServerCheck {
         let events = String(decoding: sse, as: UTF8.self)
         try require(sseReply.value(forHTTPHeaderField: "Content-Type")?.contains("text/event-stream") == true && events.contains("chat.completion.chunk") && events.contains("[DONE]"), "streaming")
         try require(events.contains("\"timings\"") && !events.contains("\"usage\""), "stream timings without unrequested usage event")
+        try require(!events.contains("discarded") && !events.contains("provisional"), "API streams only committed translation text")
         var usageRequest = body("stream usage", stream: true)
         usageRequest["stream_options"] = ["include_usage": true]
         let (usageStream, _) = try await request(body: usageRequest)

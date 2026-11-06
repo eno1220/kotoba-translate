@@ -61,6 +61,7 @@ final class Preferences: ObservableObject {
     @Published var glossary: [GlossaryTerm] { didSet { saveEncoded(glossary, forKey: "glossary") } }
     @Published var python: String { didSet { UserDefaults.standard.set(python, forKey: "python") } }
     @Published var unloadSeconds: Int { didSet { UserDefaults.standard.set(unloadSeconds, forKey: "unloadSeconds") } }
+    @Published var autoSplit: Bool { didSet { UserDefaults.standard.set(autoSplit, forKey: "autoSplit") } }
     @Published var sourceFontFamily: String { didSet {
         sourceFontFace = ""
         UserDefaults.standard.set(sourceFontFamily, forKey: "sourceFontFamily")
@@ -101,6 +102,7 @@ final class Preferences: ObservableObject {
         let bundledPath = resource.flatMap { try? String(contentsOf: $0, encoding: .utf8) }?.trimmingCharacters(in: .whitespacesAndNewlines)
         python = defaults.string(forKey: "python") ?? bundledPath ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".venv/bin/python").path
         unloadSeconds = defaults.object(forKey: "unloadSeconds") as? Int ?? 300
+        autoSplit = defaults.object(forKey: "autoSplit") as? Bool ?? true
         sourceFontFamily = defaults.string(forKey: "sourceFontFamily") ?? ""
         sourceFontSize = defaults.object(forKey: "sourceFontSize") as? Double ?? 16
         outputFontFamily = defaults.string(forKey: "outputFontFamily") ?? ""
@@ -270,6 +272,13 @@ struct PreferencesView: View {
                             .font(.callout).foregroundStyle(.secondary)
                     }
                 }
+            }
+            SettingsCard(title: "翻訳") {
+                SettingsRow("長文を自動分割", description: "生成上限に収まるよう段落や文で分割します。翻訳画面とローカルAPIに共通です。") {
+                    Toggle("長文を自動分割", isOn: $preferences.autoSplit).labelsHidden()
+                }
+                Text("最大トークン数は分割した各部分に適用します。上限に達した部分は、さらに細かくして再翻訳します。")
+                    .font(.callout).foregroundStyle(.secondary)
             }
             SettingsCard(title: "メモリ管理") {
                 SettingsRow("モデルの自動解放", description: "翻訳画面とローカルAPIに共通です。") {

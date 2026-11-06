@@ -127,7 +127,8 @@ final class LocalAPIServer: ObservableObject {
             guard let model else { throw APIError(status: 404, message: "設定でモデルを登録してください。") }
             let terms = preferences.glossary.filter { !$0.source.isEmpty || !$0.target.isEmpty }
                 .map { ["source": $0.source, "target": $0.target] }
-            let translation = try chat.translation(modelPath: model.path, source: source, target: target, form: form, terms: terms)
+            let translation = try chat.translation(modelPath: model.path, source: source, target: target, form: form,
+                                                  terms: terms, autoSplit: preferences.autoSplit)
             try Task.checkCancellation()
             let id = "chatcmpl-" + UUID().uuidString
             let created = Int(Date().timeIntervalSince1970)

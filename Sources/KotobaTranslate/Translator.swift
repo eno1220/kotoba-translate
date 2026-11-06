@@ -18,6 +18,8 @@ struct WorkerEvent: Decodable {
     var load_seconds: Double?
     var finish_reason: String?
     var queue_seconds: Double?
+    var chunk: Int?
+    var chunks: Int?
 }
 
 @MainActor
@@ -61,7 +63,7 @@ final class Translator: ObservableObject {
     }
     @Published var useGlossary = true
     @Published var optionsExpanded = false
-    @Published var maxTokens = 2048
+    @Published var maxTokens = 8192
     @Published var temperature = 0.0
     @Published private(set) var busy = false
     @Published private(set) var startedAt: Date?
@@ -75,6 +77,9 @@ final class Translator: ObservableObject {
     private var apiDelta: ((String) -> Void)?
     private var apiOutput = ""
     private var apiRequestID: UUID?
+    private var committedOutput = ""
+    private var showingDraft = false
+    private var chunkLabel = ""
     var servingAPI: Bool { apiRequestID != nil }
 
     private var process: Process?
@@ -290,7 +295,7 @@ final class Translator: ObservableObject {
             model: location.path, text: input, source: source, target: target,
             form: target == "ja" ? form : "", context: translationContext,
             glossary: terms.map { ["source": $0.source, "target": $0.target] },
-            max_tokens: maxTokens, temperature: temperature)
+            max_tokens: maxTokens, temperature: temperature, auto_split: preferences.autoSplit)
         output = ""
         begin(request)
     }
@@ -330,6 +335,9 @@ final class Translator: ObservableObject {
         if !servingAPI { error = nil }
         metrics = nil
         progress = nil
+        committedOutput = ""
+        showingDraft = false
+        chunkLabel = ""
         status = "モデルを読み込み中"
         do {
             if loadedPath != request.model || pythonPath != preferences.python || process?.isRunning != true {
@@ -424,25 +432,48 @@ final class Translator: ObservableObject {
         guard ticket == identity else { return }
         switch event.event {
         case "loading": status = "モデルを読み込み中"
+        case "planning":
+            loaded = true
+            status = "原文を分割中"
+            progress = nil
+        case "chunk":
+            chunkLabel = (event.chunks ?? 1) > 1 ? "（\(event.chunk ?? 1)/\(event.chunks ?? 1)）" : ""
+            status = "入力を処理中" + chunkLabel
+            progress = nil
         case "prefill":
             loaded = true
-            status = "入力を処理中"
+            status = "入力を処理中" + chunkLabel
             progress = Double(event.current ?? 0) / Double(max(1, event.total ?? 1))
+        case "draft":
+            loaded = true
+            status = "翻訳中" + chunkLabel
+            progress = nil
+            if !servingAPI {
+                if !showingDraft { committedOutput = output }
+                showingDraft = true
+                output = committedOutput + (event.text ?? "")
+            }
+            if event.tokens != nil { metrics = event }
         case "delta":
             loaded = true
-            status = "翻訳中"
+            status = "翻訳中" + chunkLabel
             progress = nil
             if servingAPI {
                 let text = event.text ?? ""
                 apiOutput += text
                 apiDelta?(text)
+            } else if showingDraft {
+                output = committedOutput + (event.text ?? "")
+                showingDraft = false
+                committedOutput = ""
             } else { output += event.text ?? "" }
             if event.tokens != nil { metrics = event }
         case "done":
             metrics = event
             busy = false
             progress = nil
-            status = event.finish_reason == "length" ? "生成上限に到達" : "完了"
+            status = event.finish_reason == "length" ? "生成上限に到達" :
+                (event.chunks ?? 1) > 1 ? "完了（\(event.chunks ?? 1)分割）" : "完了"
             if servingAPI { finishAPI(.success((apiOutput, event))) }
             scheduleUnload(seconds: idleSecondsOverride ?? preferences.unloadSeconds)
         case "error":
@@ -484,6 +515,8 @@ final class Translator: ObservableObject {
 
     private func stopProcess() {
         idleTask?.cancel()
+        committedOutput = ""
+        showingDraft = false
         identity = UUID() // Reject queued events from the previous process.
         if let old = process, old.isRunning {
             old.terminate()

@@ -16,6 +16,7 @@ struct TranslationRequest: Encodable {
     var glossary: [[String: String]]
     var max_tokens: Int
     var temperature: Double
+    var auto_split: Bool = true
 }
 
 struct APIError: LocalizedError {
@@ -44,6 +45,7 @@ struct ChatRequest: Decodable {
     let max_tokens: Int?
     let max_completion_tokens: Int?
     let temperature: Double?
+    let auto_split: Bool?
     let source_lang: String?
     let target_lang: String?
     let form: String?
@@ -52,7 +54,7 @@ struct ChatRequest: Decodable {
     let glossary: [Term]?
 
     func translation(modelPath: String, source: String, target: String, form defaultForm: String,
-                     terms: [[String: String]]) throws -> TranslationRequest {
+                     terms: [[String: String]], autoSplit: Bool = true) throws -> TranslationRequest {
         guard messages.filter({ $0.role == "user" }).count == 1,
               messages.allSatisfy({ ["user", "system", "developer"].contains($0.role) }),
               let text = messages.first(where: { $0.role == "user" })?.content,
@@ -62,7 +64,7 @@ struct ChatRequest: Decodable {
         let source = source_lang ?? source
         let target = target_lang ?? target
         let form = self.form ?? (target == "ja" ? defaultForm : "")
-        let maxTokens = max_completion_tokens ?? max_tokens ?? 2048
+        let maxTokens = max_completion_tokens ?? max_tokens ?? 8192
         let temperature = self.temperature ?? 0
         guard Language.all.contains(where: { $0.id == target }),
               source.isEmpty || Language.all.contains(where: { $0.id == source }),
@@ -79,6 +81,7 @@ struct ChatRequest: Decodable {
             throw APIError(status: 400, message: "予約トークン、または空の辞書項目が含まれています。")
         }
         return TranslationRequest(model: modelPath, text: text, source: source, target: target, form: form,
-                                  context: context, glossary: glossary, max_tokens: maxTokens, temperature: temperature)
+                                  context: context, glossary: glossary, max_tokens: maxTokens, temperature: temperature,
+                                  auto_split: auto_split ?? autoSplit)
     }
 }

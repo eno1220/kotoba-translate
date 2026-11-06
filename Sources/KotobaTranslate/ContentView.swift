@@ -283,6 +283,8 @@ struct ContentView: View {
                             TextField("最大トークン数", value: $translator.maxTokens, format: .number.grouping(.never))
                                 .frame(width: 80)
                         }
+                        Toggle("長文を自動分割", isOn: $preferences.autoSplit)
+                            .help("段落や文の区切りを優先して分割します。最大トークン数は各部分に適用し、上限に達した部分は再分割して翻訳します。")
                         LabeledContent("Temperature") {
                             TextField("Temperature", value: $translator.temperature, format: .number)
                                 .frame(width: 80)
