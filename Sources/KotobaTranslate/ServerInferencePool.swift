@@ -55,6 +55,8 @@ final class ServerInferencePool: ObservableObject {
     @Published private(set) var activeCount = 0
     @Published private(set) var waitingCount = 0
     @Published private(set) var loadedCount = 0
+    @Published private(set) var hasLoadedModel = false
+    @Published private(set) var isLoadingModel = false
     @Published private(set) var resources: ServerResources
     @Published private(set) var reason = "需要に応じて追加します"
     static let queueLimit = 32
@@ -62,6 +64,7 @@ final class ServerInferencePool: ObservableObject {
 
     private final class Slot {
         let translator: Translator
+        var observation: AnyCancellable?
         var assigned = false
         var model = ""
         var budget: Budget?
@@ -122,6 +125,23 @@ final class ServerInferencePool: ObservableObject {
         maxConcurrency = min(4, max(1, defaults.object(forKey: "serverConcurrency") as? Int ?? 1))
         reserveGB = min(16, max(2, defaults.object(forKey: "serverReserveGB") as? Int ?? 4))
         allowBattery = defaults.bool(forKey: "serverAllowBattery")
+        observeModel(slots[0])
+    }
+
+    private func observeModel(_ slot: Slot) {
+        slot.observation = slot.translator.$loaded.combineLatest(slot.translator.$busy)
+            .removeDuplicates { $0 == $1 }.sink { [weak self] _ in
+                // Published sends before mutation; read the full state on the next turn.
+                Task { @MainActor [weak self] in self?.refreshModelStatus() }
+            }
+        refreshModelStatus()
+    }
+
+    private func refreshModelStatus() {
+        let loaded = slots.contains { $0.translator.loaded }
+        let loading = slots.contains { $0.translator.busy && !$0.translator.loaded }
+        if hasLoadedModel != loaded { hasLoadedModel = loaded }
+        if isLoadingModel != loading { isLoadingModel = loading }
     }
 
     func start() {
@@ -216,6 +236,7 @@ final class ServerInferencePool: ObservableObject {
     }
 
     private func refreshCounts() {
+        refreshModelStatus()
         activeCount = slots.filter(\.assigned).count
         waitingCount = waiting.count
         loadedCount = slots.filter { $0.translator.loaded || $0.assigned }.count
@@ -281,6 +302,7 @@ final class ServerInferencePool: ObservableObject {
                 guard slots.count < limit else { break }
                 let slot = Slot(Translator(preferences: preferences, idleSecondsOverride: Self.surplusIdleSeconds))
                 slots.append(slot)
+                observeModel(slot)
                 candidate = slot
             }
             guard let slot = candidate else { break }

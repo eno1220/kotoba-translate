@@ -118,11 +118,13 @@ struct SettingsCard<Content: View>: View {
 struct SettingsRow<Control: View>: View {
     var title: String
     var description = ""
+    var hideControlLabels = true
     @ViewBuilder var control: Control
 
-    init(_ title: String, description: String = "", @ViewBuilder control: () -> Control) {
+    init(_ title: String, description: String = "", hideControlLabels: Bool = true, @ViewBuilder control: () -> Control) {
         self.title = title
         self.description = description
+        self.hideControlLabels = hideControlLabels
         self.control = control()
     }
 
@@ -131,7 +133,10 @@ struct SettingsRow<Control: View>: View {
             HStack(spacing: 16) {
                 Text(title)
                     .frame(width: 150, alignment: .leading)
-                HStack(spacing: 8) { control.labelsHidden() }
+                HStack(spacing: 8) {
+                    if hideControlLabels { control.labelsHidden() }
+                    else { control }
+                }
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minHeight: 30)

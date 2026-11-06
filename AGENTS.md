@@ -20,7 +20,8 @@
 - Preserve CJK IME composition: Enter submits, Shift+Enter inserts a newline, and Enter during composition confirms it.
 - Provide copy/clear actions and an easily accessible options toggle (Option-Command-O).
 - Default to raw text; use `swift-markdown-ui` for optional previews. Avoid reparsing unchanged Markdown.
-- Configure source/output fonts independently: family, size, actual native font face, and text color. List each family's real faces (e.g. W3/W6), not fixed generic weights; load the exact PostScript name.
+- Configure fonts by language, shared by source/output, with a default fallback and a separate Markdown code font. Use one text color across all languages. List each family's real faces (e.g. W3/W6), not fixed generic weights; load the exact PostScript name.
+- Keep the menu bar item present while the app is running, with a server-mode toggle. Do not display active, queued, or completed request counts in the menu.
 - Show character count and clearly labeled approximate source-token count without starting Python or loading a model. Debounce and compute off the main thread.
 
 ## Development

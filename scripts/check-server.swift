@@ -54,6 +54,8 @@ struct ServerCheck {
             if r['text'] == 'fail':
                 print(json.dumps(dict(event='error', message='mock failure')), flush=True)
                 continue
+            print(json.dumps(dict(event='loading')), flush=True)
+            time.sleep(0.1)
             print(json.dumps(dict(event='prefill', current=0, total=5)), flush=True)
             time.sleep(10 if r['text'] == 'slow' else 0.1)
             if r['text'] == 'draft':
@@ -118,17 +120,23 @@ struct ServerCheck {
             let choices = object["choices"] as! [[String: Any]]
             return (choices[0]["message"] as! [String: Any])["content"] as! String
         }
+        try require(!server.requestActivity && server.lastRequestAt == nil && !server.inference.hasLoadedModel, "initial menu status")
         let (_, unauthenticated) = try await request("/models", method: "GET", auth: false)
         try require(unauthenticated.statusCode == 401, "authentication")
         let (_, preflight) = try await request(method: "OPTIONS", auth: false)
         try require(preflight.statusCode == 204 && preflight.value(forHTTPHeaderField: "Access-Control-Allow-Origin") == "*", "CORS preflight")
+        try require(!server.requestActivity && server.lastRequestAt == nil, "unauthenticated traffic and preflight do not signal accepted API traffic")
         let (models, modelReply) = try await request("/models", method: "GET")
         try require(modelReply.statusCode == 200 && String(decoding: models, as: UTF8.self).contains("mock"), "models")
         try require(!engine.loaded, "listing models must not load the worker")
+        try require(server.requestActivity && server.lastRequestAt != nil, "short authenticated request signals API activity")
+        try await Task.sleep(for: .milliseconds(2200))
+        try require(!server.requestActivity && server.lastRequestAt != nil, "activity pulse ends while last receipt remains")
         let (first, firstReply) = try await request(body: body("hello"))
         try require(firstReply.statusCode == 200, "completion: \(String(decoding: first, as: UTF8.self))")
         let firstText = try content(first)
         try require(firstText.hasSuffix(":訳:hello") && engine.loaded, "completion and model load")
+        try require(server.inference.hasLoadedModel, "menu model status follows actual worker load")
         func timings(_ data: Data) throws -> [String: Double] {
             let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
             guard let values = object["timings"] as? [String: Double] else { throw checkFailure("missing API timings") }
@@ -184,6 +192,8 @@ struct ServerCheck {
             if engine.busy { break }
             try await Task.sleep(for: .milliseconds(10))
         }
+        try await Task.sleep(for: .milliseconds(2200))
+        try require(server.requestActivity, "long API request remains visible beyond activity pulse")
         disconnected.cancel()
         _ = try? await disconnected.value
         for _ in 0..<100 {
@@ -198,7 +208,7 @@ struct ServerCheck {
         preferences.unloadSeconds = 0
         let (beforeUnload, _) = try await request(body: body("idle"))
         try await Task.sleep(for: .milliseconds(100))
-        try require(!engine.loaded, "idle unload")
+        try require(!engine.loaded && !server.inference.hasLoadedModel, "idle unload updates menu model status")
         let (afterUnload, _) = try await request(body: body("reload"))
         try require(try content(beforeUnload).split(separator: ":").first != content(afterUnload).split(separator: ":").first, "reload after idle")
         let stopping = Task { try await request(body: body("slow")) }
@@ -209,7 +219,7 @@ struct ServerCheck {
         server.stop()
         _ = try? await stopping.value
         try await Task.sleep(for: .milliseconds(100))
-        try require(!engine.busy && !engine.loaded, "server stop cancellation")
+        try require(!engine.busy && !engine.loaded && !server.requestActivity && server.lastRequestAt == nil, "server stop clears activity")
         try await checkPool(preferences, engine: engine)
         print("PASS: auth, CORS, models, JSON/SSE, validation, limits, worker reuse, queue, cancellation/disconnect/stop, failure/crash, idle unload/reload, editor isolation (mock inference)")
     }
@@ -238,7 +248,9 @@ struct ServerCheck {
             throw checkFailure("pool condition timed out")
         }
         let first = Task { try await translate("slow") }
-        try await waitFor { engine.loaded && engine.busy }
+        try await waitFor { pool.isLoadingModel && !pool.hasLoadedModel }
+        try require(!engine.loaded, "assigned cold worker is loading, not loaded")
+        try await waitFor { engine.loaded && engine.busy && pool.hasLoadedModel }
         let second = Task { try await translate("slow") }
         try await waitFor { pool.activeCount == 2 && pool.loadedCount == 2 }
         second.cancel()
@@ -285,6 +297,12 @@ struct ServerCheck {
         _ = try? await behindEditor.value
         try require(engine.busy && engine.loaded, "server stop preserves editor-owned worker")
         engine.cancel()
+        try await waitFor { !pool.hasLoadedModel && !pool.isLoadingModel }
+        engine.translate()
+        try await waitFor { pool.hasLoadedModel }
+        try require(engine.loaded, "model status updates for editor translation while server is stopped")
+        engine.cancel()
+        try await waitFor { !pool.hasLoadedModel }
         pool.start()
         let active = Task { try await translate("slow") }
         try await waitFor { engine.busy }

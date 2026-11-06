@@ -15,6 +15,10 @@ final class LocalAPIServer: ObservableObject {
     @Published private(set) var starting = false
     @Published private(set) var error: String?
     @Published private(set) var lastTimings: [String: Double] = [:]
+    @Published private(set) var requestActivity = false
+    @Published private(set) var lastRequestAt: Date?
+    private var activeRequests = 0
+    private var activityTask: Task<Void, Never>?
     private var listener: NWListener?
     private var peers: [UUID: HTTPPeer] = [:]
     private var quitSubscription: AnyCancellable?
@@ -87,10 +91,27 @@ final class LocalAPIServer: ObservableObject {
         listener = nil
         running = false
         starting = false
+        activityTask?.cancel()
+        activityTask = nil
+        requestActivity = false
+        lastRequestAt = nil
         let connections = Array(peers.values)
         peers.removeAll()
         connections.forEach { $0.close() }
         inference.stop()
+    }
+
+    private func recordRequest() {
+        activeRequests += 1
+        lastRequestAt = Date()
+        requestActivity = true
+        activityTask?.cancel()
+        activityTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            guard let self else { return }
+            self.activityTask = nil
+            if self.activeRequests == 0 { self.requestActivity = false }
+        }
     }
 
     private func handle(_ request: HTTPRequest, peer: HTTPPeer) async {
@@ -99,6 +120,15 @@ final class LocalAPIServer: ObservableObject {
         if request.method == "OPTIONS" { peer.respond(status: 204, body: Data()); return }
         guard request.headers["authorization"] == "Bearer " + activeKey else {
             peer.fail(APIError(status: 401, message: "APIキーを確認してください。")); return
+        }
+        let supported = (request.method == "GET" && request.path == "/v1/models") ||
+            (request.method == "POST" && request.path == "/v1/chat/completions")
+        if supported { recordRequest() }
+        defer {
+            if supported {
+                activeRequests -= 1
+                if activeRequests == 0 && activityTask == nil { requestActivity = false }
+            }
         }
         if request.method == "GET", request.path == "/v1/models" {
             peer.json(["object": "list", "data": preferences.models.map {

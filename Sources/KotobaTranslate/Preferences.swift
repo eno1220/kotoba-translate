@@ -278,15 +278,10 @@ struct PreferencesView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             SettingsCard(title: "メモリ管理") {
-                SettingsRow("モデルの自動解放", description: "翻訳画面とローカルAPIに共通です。") {
-                    Picker("自動解放", selection: $preferences.unloadSeconds) {
-                        Text("翻訳完了後すぐ").tag(0)
-                        Text("1分後").tag(60); Text("5分後").tag(300)
-                        Text("15分後").tag(900); Text("30分後").tag(1800)
-                        Text("アプリ終了時").tag(-1)
-                    }.pickerStyle(.menu).frame(width: 160)
+                SettingsRow("モデルの自動解放", description: "翻訳画面とローカルAPIに共通です。", hideControlLabels: false) {
+                    ModelUnloadControl(preferences: preferences)
                 }
-                Text("解放後は、次の翻訳時に読み込み直します。")
+                Text("翻訳完了からの時間を分単位で指定します。既定は5分、0分は完了後すぐに解放します。解放後は次の翻訳時に読み込み直します。")
                     .font(.callout).foregroundStyle(.secondary)
             }
             SettingsCard(title: "実行環境") {
@@ -413,6 +408,41 @@ struct PreferencesView: View {
                 .frame(maxWidth: .infinity, alignment: .leading).padding(18)
                 .modifier(ReadingSurface(cornerRadius: 12))
                 .accessibilityLabel("\(title)のフォントプレビュー")
+        }
+    }
+}
+
+/// Share the numeric idle timeout between app preferences and the API settings.
+struct ModelUnloadControl: View {
+    @ObservedObject var preferences: Preferences
+    @State private var lastEnabledSeconds = 300
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                TextField("自動解放までの分数", value: Binding(
+                    get: { (preferences.unloadSeconds >= 0 ? preferences.unloadSeconds : lastEnabledSeconds) / 60 },
+                    set: { minutes in
+                        guard minutes >= 0, minutes <= Int.max / 60 else { return }
+                        preferences.unloadSeconds = minutes * 60
+                    }
+                ), format: .number.grouping(.never))
+                .labelsHidden()
+                .multilineTextAlignment(.trailing)
+                .frame(width: 72)
+                .disabled(preferences.unloadSeconds < 0)
+                .accessibilityLabel("翻訳完了から自動解放までの時間（分）")
+                Text("分後")
+            }
+            Toggle("アプリ終了まで保持", isOn: Binding(
+                get: { preferences.unloadSeconds < 0 },
+                set: { preferences.unloadSeconds = $0 ? -1 : lastEnabledSeconds }
+            ))
+            .toggleStyle(.checkbox)
+            .fixedSize()
+        }
+        .onChange(of: preferences.unloadSeconds, initial: true) { _, seconds in
+            if seconds >= 0 { lastEnabledSeconds = seconds }
         }
     }
 }

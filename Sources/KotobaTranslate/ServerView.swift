@@ -195,11 +195,8 @@ struct ServerView: View {
                     SettingsRow("モデル") { Text(model.tag).textSelection(.enabled) }
                 }
                 Divider()
-                SettingsRow("自動解放") {
-                    Picker("自動解放", selection: $preferences.unloadSeconds) {
-                        Text("完了後すぐ").tag(0); Text("1分後").tag(60); Text("5分後").tag(300)
-                        Text("15分後").tag(900); Text("30分後").tag(1800); Text("アプリ終了時").tag(-1)
-                    }.pickerStyle(.menu).frame(width: 160)
+                SettingsRow("自動解放", hideControlLabels: false) {
+                    ModelUnloadControl(preferences: preferences)
                 }
                 SettingsRow("モデルの操作") {
                     Button("モデルを解放", systemImage: "eject", action: translator.unload)
@@ -208,7 +205,7 @@ struct ServerView: View {
                         Button("翻訳を中止", action: translator.cancel)
                     }
                 }
-                Text("翻訳画面とAPIで共有します。混雑時に追加したモデルは30秒後に解放し、最後の1つには上の自動解放設定を使います。")
+                Text("翻訳完了からの時間を分単位で指定します。既定は5分、0分は完了後すぐに解放します。翻訳画面とAPIで共有し、混雑時に追加したモデルは30秒後に解放します。")
                     .font(.callout).foregroundStyle(.secondary)
             }
             if translator.busy || translator.metrics != nil || !server.lastTimings.isEmpty {
