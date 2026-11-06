@@ -1,167 +1,127 @@
-import AppKit
-import PDFKit
-import Vision
+import Foundation
 
-/// Native extraction first; only image-only pages pay the cost of local OCR.
+/// Docling runs independently from the translation worker and never retains a document.
 enum PDFImporter {
     struct Result {
         let markdown: String
         let pages: Int
-        let ocrPages: Int
     }
 
     enum ImportError: LocalizedError {
-        case unreadable, locked, tooLarge, empty, render(Int)
+        case unreadable, locked, tooLarge, empty, setup, conversion
         var errorDescription: String? {
             switch self {
             case .unreadable: return "PDFを開けませんでした。ファイルを確認してください。"
             case .locked: return "パスワードで保護されたPDFです。保護を解除したPDFを選んでください。"
             case .tooLarge: return "PDFが大きすぎます。200MB・1,000ページ・抽出後200万文字以内に分割してください。"
             case .empty: return "PDFから文字を抽出できませんでした。"
-            case .render(let page): return "\(page)ページ目をOCR用に描画できませんでした。"
+            case .setup: return "Doclingの準備が必要です。uv syncとREADMEの解析モデル配置手順を実行し、設定のPythonパスを確認してください。"
+            case .conversion: return "DoclingでPDFを変換できませんでした。ファイルと解析モデルの配置を確認してください。"
             }
         }
     }
 
-    static func convert(_ url: URL, progress: @escaping (Int, Int) async -> Void) async throws -> Result {
+    // Serializes launch/cancel so a cancellation before launch cannot leave an orphan.
+    private final class ConversionProcess: @unchecked Sendable {
+        let process = Process()
+        private let lock = NSLock()
+        private var cancelled = false
+
+        func start() throws {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !cancelled else { throw CancellationError() }
+            try process.run()
+        }
+
+        func stop() {
+            lock.lock()
+            defer { lock.unlock() }
+            cancelled = true
+            if process.isRunning { process.terminate() }
+        }
+    }
+
+    static func convert(_ url: URL, python: String, script: URL,
+                        progress: @escaping (Int, Int) async -> Void) async throws -> Result {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         try Task.checkCancellation()
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size <= 200 * 1024 * 1024 else { throw ImportError.tooLarge }
-        guard let document = PDFDocument(url: url) else { throw ImportError.unreadable }
-        guard !document.isLocked else { throw ImportError.locked }
-        guard document.pageCount <= 1000 else { throw ImportError.tooLarge }
-        var pages = [String]()
-        var count = 0
-        var ocrPages = 0
-        await progress(0, document.pageCount)
-        for index in 0..<document.pageCount {
-            try Task.checkCancellation()
-            guard let page = document.page(at: index) else { throw ImportError.unreadable }
-            let native = autoreleasepool { page.attributedString }
-            let markdown: String
-            if let native, native.string.contains(where: { $0.isLetter || $0.isNumber }) {
-                guard native.length <= 4_000_000 else { throw ImportError.tooLarge }
-                markdown = format(native, paragraphBreaks: paragraphBreaks(in: page, text: native))
-            } else {
-                ocrPages += 1
-                markdown = try await recognize(page, number: index + 1)
+        let python = (python as NSString).expandingTildeInPath
+        guard FileManager.default.isExecutableFile(atPath: python),
+              FileManager.default.fileExists(atPath: script.path) else { throw ImportError.setup }
+        let conversion = ConversionProcess()
+        let process = conversion.process
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: python)
+        process.arguments = ["-u", script.path, url.path]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = FileHandle.standardError
+        var environment = ProcessInfo.processInfo.environment
+        environment["HF_HUB_OFFLINE"] = "1"
+        environment["TRANSFORMERS_OFFLINE"] = "1"
+        environment["HF_HUB_DISABLE_TELEMETRY"] = "1"
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        process.environment = environment
+        await progress(0, 0)
+        return try await withTaskCancellationHandler {
+            defer { try? output.fileHandleForReading.close() }
+            do { try conversion.start() }
+            catch is CancellationError { throw CancellationError() }
+            catch { throw ImportError.setup }
+            defer {
+                conversion.stop()
+                process.waitUntilExit()
             }
-            try Task.checkCancellation()
-            count += markdown.count
-            guard count <= 2_000_000 else { throw ImportError.tooLarge }
-            if !markdown.isEmpty { pages.append(markdown) }
-            await progress(index + 1, document.pageCount)
-        }
-        guard !pages.isEmpty else { throw ImportError.empty }
-        return Result(markdown: pages.joined(separator: "\n\n"), pages: document.pageCount, ocrPages: ocrPages)
-    }
-
-    private static func recognize(_ page: PDFPage, number: Int) async throws -> String {
-        // About 180–220 dpi on ordinary pages; bounded memory even for large scans.
-        let image: CGImage = try autoreleasepool {
-            let bounds = page.bounds(for: .mediaBox)
-            guard bounds.width > 0, bounds.height > 0 else { throw ImportError.render(number) }
-            let scale = min(3, 2200 / max(bounds.width, bounds.height))
-            let thumbnail = page.thumbnail(of: NSSize(width: bounds.width * scale, height: bounds.height * scale), for: .mediaBox)
-            guard let image = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-                throw ImportError.render(number)
-            }
-            return image
-        }
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.automaticallyDetectsLanguage = true
-        request.usesLanguageCorrection = true
-        try await withTaskCancellationHandler {
-            try Task.checkCancellation()
-            try VNImageRequestHandler(cgImage: image).perform([request])
-            try Task.checkCancellation()
-        } onCancel: { request.cancel() }
-        // Vision supplies reading order. Preserve line breaks rather than inventing structure.
-        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-        return format(NSAttributedString(string: text))
-    }
-
-    private static func paragraphBreaks(in page: PDFPage, text: NSAttributedString) -> Set<Int> {
-        let string = text.string as NSString
-        var breaks = Set<Int>()
-        var previous: CGRect?
-        var offset = 0
-        while offset < string.length {
-            let range = string.lineRange(for: NSRange(location: offset, length: 0))
-            if let bounds = page.selection(for: range)?.bounds(for: page), !bounds.isEmpty {
-                if let previous {
-                    let height = max(previous.height, bounds.height)
-                    // Extra vertical space or the start of another column.
-                    if previous.minY - bounds.maxY > height * 0.65 || bounds.minY > previous.maxY {
-                        breaks.insert(offset)
+            var pending = Data()
+            var result: Result?
+            var failure: ImportError?
+            while true {
+                try Task.checkCancellation()
+                let chunk = output.fileHandleForReading.availableData
+                if chunk.isEmpty { break }
+                pending.append(chunk)
+                // A JSON line may contain up to two million escaped Unicode characters.
+                guard pending.count <= 32 * 1024 * 1024 else { throw ImportError.tooLarge }
+                while let newline = pending.firstIndex(of: 10) {
+                    let line = Data(pending[..<newline])
+                    pending.removeSubrange(...newline)
+                    guard let event = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                          let kind = event["event"] as? String else { throw ImportError.conversion }
+                    switch kind {
+                    case "progress":
+                        if let current = event["current"] as? Int, let total = event["total"] as? Int {
+                            await progress(current, total)
+                        }
+                    case "result":
+                        guard let markdown = event["markdown"] as? String, let pages = event["pages"] as? Int,
+                              pages > 0, pages <= 1000 else { throw ImportError.conversion }
+                        guard markdown.count <= 2_000_000 else { throw ImportError.tooLarge }
+                        guard !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ImportError.empty }
+                        result = Result(markdown: markdown, pages: pages)
+                    case "error":
+                        switch event["code"] as? String {
+                        case "locked": failure = .locked
+                        case "too_large": failure = .tooLarge
+                        case "empty": failure = .empty
+                        case "unreadable": failure = .unreadable
+                        case "setup": failure = .setup
+                        default: failure = .conversion
+                        }
+                    default: throw ImportError.conversion
                     }
                 }
-                previous = bounds
             }
-            offset = NSMaxRange(range)
+            process.waitUntilExit()
+            try Task.checkCancellation()
+            if let failure { throw failure }
+            guard process.terminationStatus == 0, pending.isEmpty, let result else { throw ImportError.conversion }
+            return result
+        } onCancel: {
+            conversion.stop()
         }
-        return breaks
-    }
-
-    /// Conservative font-size headings and paragraph reflow; no document model required.
-    static func format(_ text: NSAttributedString, paragraphBreaks: Set<Int> = []) -> String {
-        let string = text.string as NSString
-        var lines: [(text: String, size: CGFloat, startsParagraph: Bool)] = []
-        var offset = 0
-        while offset < string.length {
-            let range = string.lineRange(for: NSRange(location: offset, length: 0))
-            let content = string.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
-            var size: CGFloat = 0
-            text.enumerateAttribute(.font, in: range) { value, _, _ in
-                if let font = value as? NSFont { size = max(size, font.pointSize) }
-            }
-            lines.append((content, size, paragraphBreaks.contains(offset)))
-            offset = NSMaxRange(range)
-        }
-        // Weight by text length so a short title cannot dominate the body size.
-        var sizes: [Int: Int] = [:]
-        for line in lines where line.size > 0 && !line.text.isEmpty {
-            sizes[Int(line.size.rounded()), default: 0] += line.text.count
-        }
-        let body = CGFloat(sizes.max(by: { $0.value < $1.value })?.key ?? 0)
-        var blocks = [String]()
-        var paragraph = ""
-        func flush() {
-            if !paragraph.isEmpty { blocks.append(paragraph); paragraph = "" }
-        }
-        for line in lines {
-            if line.startsParagraph { flush() }
-            let value = line.text
-            if value.isEmpty { flush(); continue }
-            let heading = body > 0 && line.size >= body * 1.25 && value.count <= 160
-            let bullet = value.range(of: "^[•●▪◦]\\s*", options: .regularExpression)
-            let list = value.range(of: "^(?:[-*+]\\s+|[0-9]+[.)]\\s+)", options: .regularExpression) != nil
-            if heading {
-                flush()
-                blocks.append((line.size >= body * 1.7 ? "# " : "## ") + value)
-            } else if let bullet {
-                flush(); blocks.append("- " + value[bullet.upperBound...])
-            } else if list {
-                flush(); blocks.append(value)
-            } else {
-                if !paragraph.isEmpty {
-                    // CJK wraps do not need a synthetic space.
-                    let last = paragraph.unicodeScalars.last
-                    let first = value.unicodeScalars.first
-                    if !(last.map(isCJK) == true && first.map(isCJK) == true) { paragraph += " " }
-                }
-                paragraph += value
-            }
-        }
-        flush()
-        return blocks.joined(separator: "\n\n")
-    }
-
-    private static func isCJK(_ scalar: Unicode.Scalar) -> Bool {
-        (0x3000...0x9fff).contains(scalar.value) || (0xac00...0xd7af).contains(scalar.value) ||
-        (0xf900...0xfaff).contains(scalar.value) || (0x20000...0x323af).contains(scalar.value)
     }
 }

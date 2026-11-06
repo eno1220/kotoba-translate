@@ -196,16 +196,20 @@ final class Translator: ObservableObject {
         fileProgress = "ファイルを読み込み中"
         let revision = UUID()
         fileRevision = revision
+        let importPython = preferences.python
         fileTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let text: String
                 let status: String
                 if url.pathExtension.lowercased() == "pdf" {
-                    let result = try await PDFImporter.convert(url) { current, total in
+                    guard let script = Bundle.module.url(forResource: "pdf_importer", withExtension: "py", subdirectory: "Resources") else {
+                        throw PDFImporter.ImportError.setup
+                    }
+                    let result = try await PDFImporter.convert(url, python: importPython, script: script) { current, total in
                         await self?.updateFileProgress(current, total: total, revision: revision)
                     }
                     text = result.markdown
-                    status = "PDF \(result.pages)ページ取り込み済み（OCR \(result.ocrPages)）"
+                    status = "PDF \(result.pages)ページ取り込み済み（Docling）"
                 } else {
                     text = try TextFileImporter.read(url)
                     status = "テキスト取り込み済み"
@@ -229,7 +233,7 @@ final class Translator: ObservableObject {
 
     private func updateFileProgress(_ current: Int, total: Int, revision: UUID) {
         guard revision == fileRevision else { return }
-        fileProgress = "PDF \(current)/\(total)ページ"
+        fileProgress = total == 0 ? "Doclingを準備中" : "DoclingでPDFを変換中 \(current)/\(total)ページ"
     }
 
     private func finishFileImport(_ text: String?, status: String, error: String?, revision: UUID) {
